@@ -62,7 +62,7 @@ def test_enrich_full_flow(client):
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
 
-    resp = client.post("/enrich")
+    resp = client.post("/datos")
     assert resp.status_code == 200
 
     data = resp.json()
@@ -83,7 +83,7 @@ def test_enrich_no_companies(client):
         return_value=Response(200, json={"results": []})
     )
 
-    resp = client.post("/enrich")
+    resp = client.post("/datos")
     assert resp.status_code == 200
 
     data = resp.json()
@@ -127,7 +127,7 @@ def test_enrich_no_google_results(client):
         return_value=Response(200, json={})
     )
 
-    resp = client.post("/enrich")
+    resp = client.post("/datos")
     assert resp.status_code == 200
 
     data = resp.json()
