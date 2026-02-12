@@ -11,6 +11,7 @@ from app.services.hubspot import HubSpotService
 logger = logging.getLogger(__name__)
 
 HUBSPOT_DELAY = 0.1  # seconds between HubSpot calls
+MAX_COMPANIES_PER_REQUEST = 30
 
 
 class EnrichmentService:
@@ -25,7 +26,8 @@ class EnrichmentService:
         self._overwrite = overwrite
 
     async def run(self) -> EnrichmentResponse:
-        companies = await self._hubspot.search_companies()
+        all_companies = await self._hubspot.search_companies()
+        companies = all_companies[:MAX_COMPANIES_PER_REQUEST]
         results: list[CompanyResult] = []
         enriched = 0
         no_results = 0
