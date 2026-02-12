@@ -1,4 +1,5 @@
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 import httpx
@@ -24,7 +25,9 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(
         level=settings.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         hubspot = HubSpotService(client, settings.hubspot_access_token)

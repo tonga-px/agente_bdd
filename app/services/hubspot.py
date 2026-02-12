@@ -63,6 +63,14 @@ class HubSpotService:
             if resp.status_code == 429:
                 raise RateLimitError("HubSpot")
             if resp.status_code >= 400:
+                if companies:
+                    logger.warning(
+                        "HubSpot search returned %d on page fetch, "
+                        "returning %d companies collected so far",
+                        resp.status_code,
+                        len(companies),
+                    )
+                    break
                 raise HubSpotError(resp.text, status_code=resp.status_code)
 
             data = resp.json()
