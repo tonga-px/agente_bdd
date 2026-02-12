@@ -2,9 +2,9 @@ from pydantic import BaseModel
 
 
 class AddressComponent(BaseModel):
-    longText: str
-    shortText: str
-    types: list[str]
+    longText: str | None = None
+    shortText: str | None = None
+    types: list[str] = []
 
 
 class GooglePlace(BaseModel):
