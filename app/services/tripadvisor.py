@@ -1,4 +1,5 @@
 import logging
+import re
 import unicodedata
 
 import httpx
@@ -24,8 +25,10 @@ _STOP_WORDS = frozenset({
 
 
 def _normalize(text: str) -> str:
-    """Lowercase and strip accents."""
-    nfkd = unicodedata.normalize("NFKD", text.lower())
+    """Lowercase, strip accents, and remove bracketed codes like [C81]."""
+    text = re.sub(r"\[.*?\]", "", text)
+    text = re.sub(r"\(.*?\)", "", text)
+    nfkd = unicodedata.normalize("NFKD", text.lower().strip())
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
