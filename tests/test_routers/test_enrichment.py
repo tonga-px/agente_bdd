@@ -39,6 +39,13 @@ def _mock_ta_details(location_id="999"):
                 "category": {"name": "Hotel"},
                 "subcategory": [{"name": "Boutique"}],
                 "web_url": "https://www.tripadvisor.com/Hotel_Review-999",
+                "description": "A lovely hotel in Santiago.",
+                "awards": [{"display_name": "Travellers' Choice 2024"}],
+                "amenities": ["WiFi", "Pool", "Spa"],
+                "trip_types": [{"name": "Parejas", "value": "45"}],
+                "review_rating_count": {"5": 500, "4": 200, "3": 50, "2": 10, "1": 5},
+                "phone": "+56 2 1234 5678",
+                "email": "info@acmehotel.cl",
             },
         )
     )
@@ -96,6 +103,11 @@ def test_enrich_full_flow(client):
                         "formattedAddress": "Av. Providencia 123, Santiago, Chile",
                         "nationalPhoneNumber": "+56 2 1234 5678",
                         "websiteUri": "https://acme.cl",
+                        "rating": 4.3,
+                        "userRatingCount": 1234,
+                        "googleMapsUri": "https://maps.google.com/?cid=123",
+                        "priceLevel": "PRICE_LEVEL_MODERATE",
+                        "businessStatus": "OPERATIONAL",
                         "addressComponents": [
                             {"longText": "123", "shortText": "123", "types": ["street_number"]},
                             {"longText": "Av. Providencia", "shortText": "Av. Providencia", "types": ["route"]},

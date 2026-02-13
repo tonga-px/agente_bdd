@@ -19,6 +19,11 @@ class GooglePlace(BaseModel):
     websiteUri: str | None = None
     addressComponents: list[AddressComponent] = []
     location: LatLng | None = None
+    rating: float | None = None
+    userRatingCount: int | None = None
+    googleMapsUri: str | None = None
+    priceLevel: str | None = None
+    businessStatus: str | None = None
 
 
 class TextSearchResponse(BaseModel):

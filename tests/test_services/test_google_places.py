@@ -33,6 +33,11 @@ async def test_get_place_details_success():
                 "formattedAddress": "Av. Providencia 123, Santiago, Chile",
                 "nationalPhoneNumber": "+56 2 1234 5678",
                 "websiteUri": "https://acme.cl",
+                "rating": 4.3,
+                "userRatingCount": 1234,
+                "googleMapsUri": "https://maps.google.com/?cid=123",
+                "priceLevel": "PRICE_LEVEL_MODERATE",
+                "businessStatus": "OPERATIONAL",
                 "addressComponents": [
                     {"longText": "Santiago", "shortText": "Santiago", "types": ["locality"]},
                 ],
@@ -48,6 +53,11 @@ async def test_get_place_details_success():
     assert place.formattedAddress == "Av. Providencia 123, Santiago, Chile"
     assert place.nationalPhoneNumber == "+56 2 1234 5678"
     assert place.websiteUri == "https://acme.cl"
+    assert place.rating == 4.3
+    assert place.userRatingCount == 1234
+    assert place.googleMapsUri == "https://maps.google.com/?cid=123"
+    assert place.priceLevel == "PRICE_LEVEL_MODERATE"
+    assert place.businessStatus == "OPERATIONAL"
 
 
 @respx.mock

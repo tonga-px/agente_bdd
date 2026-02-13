@@ -1,7 +1,177 @@
+from datetime import datetime, timezone
 from html import escape
 
 from app.schemas.google_places import GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation
+
+_PRICE_LEVEL_MAP = {
+    "PRICE_LEVEL_INEXPENSIVE": "\U0001f4b0",
+    "PRICE_LEVEL_MODERATE": "\U0001f4b0\U0001f4b0",
+    "PRICE_LEVEL_EXPENSIVE": "\U0001f4b0\U0001f4b0\U0001f4b0",
+    "PRICE_LEVEL_VERY_EXPENSIVE": "\U0001f4b0\U0001f4b0\U0001f4b0\U0001f4b0",
+}
+
+_BUSINESS_STATUS_MAP = {
+    "OPERATIONAL": ("\u2705", "Operativo"),
+    "CLOSED_TEMPORARILY": ("\u26a0\ufe0f", "Cerrado temporalmente"),
+    "CLOSED_PERMANENTLY": ("\u274c", "Cerrado permanentemente"),
+}
+
+
+def _format_google_section(place: GooglePlace) -> str | None:
+    rows: list[str] = []
+
+    # Rating + reviews
+    if place.rating is not None:
+        rating_text = f"\u2b50 {place.rating}/5"
+        if place.userRatingCount is not None:
+            rating_text += f" ({place.userRatingCount:,} reviews)"
+        rows.append(f"<li><strong>Rating:</strong> {rating_text}</li>")
+
+    # Business status
+    if place.businessStatus:
+        emoji, label = _BUSINESS_STATUS_MAP.get(
+            place.businessStatus, ("", place.businessStatus)
+        )
+        rows.append(f"<li><strong>Estado:</strong> {emoji} {escape(label)}</li>")
+
+    # Price level
+    if place.priceLevel and place.priceLevel in _PRICE_LEVEL_MAP:
+        rows.append(
+            f"<li><strong>Precio:</strong> {_PRICE_LEVEL_MAP[place.priceLevel]}</li>"
+        )
+
+    # Address
+    if place.formattedAddress:
+        rows.append(
+            f"<li><strong>Direccion:</strong> {escape(place.formattedAddress)}</li>"
+        )
+
+    # Phone
+    phone = place.nationalPhoneNumber or place.internationalPhoneNumber
+    if phone:
+        rows.append(f"<li><strong>Telefono:</strong> {escape(phone)}</li>")
+
+    # Website
+    if place.websiteUri:
+        url = escape(place.websiteUri)
+        rows.append(f'<li><strong>Website:</strong> <a href="{url}">{url}</a></li>')
+
+    # Google Maps link
+    if place.googleMapsUri:
+        maps_url = escape(place.googleMapsUri)
+        rows.append(
+            f'<li><strong>Google Maps:</strong> <a href="{maps_url}">Ver en Google Maps</a></li>'
+        )
+
+    if not rows:
+        return None
+    return f"<h3>Google Places</h3><ul>{''.join(rows)}</ul>"
+
+
+def _format_tripadvisor_section(ta: TripAdvisorLocation) -> str | None:
+    rows: list[str] = []
+
+    # Rating + reviews
+    if ta.rating and ta.num_reviews:
+        rows.append(
+            f"<li><strong>Rating:</strong> \u2b50 {escape(ta.rating)}/5 "
+            f"({escape(ta.num_reviews)} reviews)</li>"
+        )
+    elif ta.rating:
+        rows.append(f"<li><strong>Rating:</strong> \u2b50 {escape(ta.rating)}/5</li>")
+
+    # Ranking
+    if ta.ranking_data:
+        ranking = ta.ranking_data.get("ranking_string", "")
+        if ranking:
+            rows.append(f"<li><strong>Ranking:</strong> {escape(ranking)}</li>")
+
+    # Price level
+    if ta.price_level:
+        rows.append(f"<li><strong>Precio:</strong> {escape(ta.price_level)}</li>")
+
+    # Category
+    category_parts: list[str] = []
+    if ta.category:
+        cat_name = ta.category.get("name", "")
+        if cat_name:
+            category_parts.append(cat_name)
+    if ta.subcategory:
+        sub_names = [s.get("name", "") for s in ta.subcategory if s.get("name")]
+        category_parts.extend(sub_names)
+    if category_parts:
+        rows.append(
+            f"<li><strong>Categoria:</strong> {escape(' > '.join(category_parts))}</li>"
+        )
+
+    # Awards
+    if ta.awards:
+        award_names = [
+            a.get("display_name", "") for a in ta.awards if a.get("display_name")
+        ]
+        if award_names:
+            rows.append(
+                f"<li><strong>Awards:</strong> \U0001f3c6 {escape(', '.join(award_names))}</li>"
+            )
+
+    # Amenities (first 10)
+    if ta.amenities:
+        shown = ta.amenities[:10]
+        rows.append(
+            f"<li><strong>Amenities:</strong> {escape(', '.join(shown))}</li>"
+        )
+
+    # Trip types
+    if ta.trip_types:
+        trip_parts: list[str] = []
+        for tt in ta.trip_types:
+            name = tt.get("name") or tt.get("localized_name", "")
+            value = tt.get("value", "")
+            if name and value:
+                trip_parts.append(f"{name} {value}%")
+        if trip_parts:
+            rows.append(
+                f"<li><strong>Trip Types:</strong> {escape(', '.join(trip_parts))}</li>"
+            )
+
+    # Rating breakdown
+    if ta.review_rating_count:
+        breakdown_parts: list[str] = []
+        for stars in ("5", "4", "3", "2", "1"):
+            count = ta.review_rating_count.get(stars)
+            if count is not None:
+                breakdown_parts.append(f"{stars}\u2b50: {count}")
+        if breakdown_parts:
+            rows.append(
+                f"<li><strong>Reviews:</strong> {' | '.join(breakdown_parts)}</li>"
+            )
+
+    # Description (truncated to 200 chars)
+    if ta.description:
+        desc = ta.description
+        if len(desc) > 200:
+            desc = desc[:200] + "..."
+        rows.append(f"<li><strong>Descripcion:</strong> {escape(desc)}</li>")
+
+    # Phone
+    if ta.phone:
+        rows.append(f"<li><strong>Telefono:</strong> {escape(ta.phone)}</li>")
+
+    # Email
+    if ta.email:
+        rows.append(f"<li><strong>Email:</strong> {escape(ta.email)}</li>")
+
+    # URL
+    if ta.web_url:
+        ta_url = escape(ta.web_url)
+        rows.append(
+            f'<li><strong>URL:</strong> <a href="{ta_url}">Ver en TripAdvisor</a></li>'
+        )
+
+    if not rows:
+        return None
+    return f"<h3>TripAdvisor</h3><ul>{''.join(rows)}</ul>"
 
 
 def build_enrichment_note(
@@ -11,53 +181,21 @@ def build_enrichment_note(
 ) -> str:
     """Build an HTML enrichment summary for a HubSpot note."""
     title = escape(company_name or "Empresa")
-    parts: list[str] = [f"<h2>Enrichment Summary - {title}</h2>"]
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    parts: list[str] = [
+        f"<h2>Enrichment Summary - {title}</h2>",
+        f"<p><em>Fecha: {now}</em></p>",
+    ]
 
     if place:
-        rows: list[str] = []
-        if place.formattedAddress:
-            rows.append(f"<li><strong>Direccion:</strong> {escape(place.formattedAddress)}</li>")
-        phone = place.nationalPhoneNumber or place.internationalPhoneNumber
-        if phone:
-            rows.append(f"<li><strong>Telefono:</strong> {escape(phone)}</li>")
-        if place.websiteUri:
-            url = escape(place.websiteUri)
-            rows.append(f'<li><strong>Website:</strong> <a href="{url}">{url}</a></li>')
-        if not rows:
-            rows.append("<li>Sin datos encontrados</li>")
-        parts.append(f"<h3>Google Places</h3><ul>{''.join(rows)}</ul>")
+        section = _format_google_section(place)
+        if section:
+            parts.append(section)
 
     if ta_location:
-        rows = []
-        if ta_location.rating and ta_location.num_reviews:
-            rows.append(
-                f"<li><strong>Rating:</strong> {escape(ta_location.rating)}/5 "
-                f"({escape(ta_location.num_reviews)} reviews)</li>"
-            )
-        elif ta_location.rating:
-            rows.append(f"<li><strong>Rating:</strong> {escape(ta_location.rating)}/5</li>")
-        if ta_location.ranking_data:
-            ranking = ta_location.ranking_data.get("ranking_string", "")
-            if ranking:
-                rows.append(f"<li><strong>Ranking:</strong> {escape(ranking)}</li>")
-        if ta_location.price_level:
-            rows.append(f"<li><strong>Price Level:</strong> {escape(ta_location.price_level)}</li>")
-        category_parts: list[str] = []
-        if ta_location.category:
-            cat_name = ta_location.category.get("name", "")
-            if cat_name:
-                category_parts.append(cat_name)
-        if ta_location.subcategory:
-            sub_names = [s.get("name", "") for s in ta_location.subcategory if s.get("name")]
-            category_parts.extend(sub_names)
-        if category_parts:
-            rows.append(f"<li><strong>Categoria:</strong> {escape(' > '.join(category_parts))}</li>")
-        if ta_location.web_url:
-            ta_url = escape(ta_location.web_url)
-            rows.append(f'<li><strong>URL:</strong> <a href="{ta_url}">{ta_url}</a></li>')
-        if not rows:
-            rows.append("<li>Sin datos encontrados</li>")
-        parts.append(f"<h3>TripAdvisor</h3><ul>{''.join(rows)}</ul>")
+        section = _format_tripadvisor_section(ta_location)
+        if section:
+            parts.append(section)
 
     if not place and not ta_location:
         parts.append("<p>No se encontraron datos en ninguna fuente.</p>")

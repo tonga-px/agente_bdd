@@ -16,7 +16,12 @@ FIELD_MASK = (
     "places.internationalPhoneNumber,"
     "places.websiteUri,"
     "places.addressComponents,"
-    "places.location"
+    "places.location,"
+    "places.rating,"
+    "places.userRatingCount,"
+    "places.googleMapsUri,"
+    "places.priceLevel,"
+    "places.businessStatus"
 )
 
 DETAILS_FIELD_MASK = (
@@ -25,7 +30,12 @@ DETAILS_FIELD_MASK = (
     "internationalPhoneNumber,"
     "websiteUri,"
     "addressComponents,"
-    "location"
+    "location,"
+    "rating,"
+    "userRatingCount,"
+    "googleMapsUri,"
+    "priceLevel,"
+    "businessStatus"
 )
 
 

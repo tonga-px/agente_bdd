@@ -82,6 +82,13 @@ async def test_get_details(service):
                 "category": {"name": "Hotel"},
                 "subcategory": [{"name": "Boutique"}],
                 "web_url": "https://www.tripadvisor.com/Hotel_Review-123456",
+                "description": "A great hotel for families.",
+                "awards": [{"display_name": "Travellers' Choice 2024"}],
+                "amenities": ["WiFi", "Pool"],
+                "trip_types": [{"name": "Familias", "value": "40"}],
+                "review_rating_count": {"5": 800, "4": 300, "3": 50},
+                "phone": "+56 2 9999 8888",
+                "email": "test@hotel.com",
             },
         )
     )
@@ -93,6 +100,11 @@ async def test_get_details(service):
     assert loc.num_reviews == "1234"
     assert loc.price_level == "$$"
     assert loc.web_url == "https://www.tripadvisor.com/Hotel_Review-123456"
+    assert loc.description == "A great hotel for families."
+    assert len(loc.awards) == 1
+    assert loc.amenities == ["WiFi", "Pool"]
+    assert loc.phone == "+56 2 9999 8888"
+    assert loc.email == "test@hotel.com"
 
 
 @respx.mock
