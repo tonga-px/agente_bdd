@@ -15,9 +15,10 @@ DETAILS_URL = "https://api.content.tripadvisor.com/api/v1/location/{location_id}
 
 
 class TripAdvisorService:
-    def __init__(self, client: httpx.AsyncClient, api_key: str):
+    def __init__(self, client: httpx.AsyncClient, api_key: str, referer: str = "https://web-production-705c.up.railway.app"):
         self._client = client
         self._api_key = api_key
+        self._headers = {"Referer": referer}
 
     async def search(self, query: str) -> str | None:
         """Search for a location and return its location_id, or None."""
@@ -28,7 +29,7 @@ class TripAdvisorService:
             "language": "es",
         }
 
-        resp = await self._client.get(SEARCH_URL, params=params)
+        resp = await self._client.get(SEARCH_URL, params=params, headers=self._headers)
 
         if resp.status_code == 429:
             raise RateLimitError("TripAdvisor")
@@ -50,7 +51,7 @@ class TripAdvisorService:
             "language": "es",
         }
 
-        resp = await self._client.get(url, params=params)
+        resp = await self._client.get(url, params=params, headers=self._headers)
 
         if resp.status_code == 429:
             raise RateLimitError("TripAdvisor")
