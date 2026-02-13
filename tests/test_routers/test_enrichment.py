@@ -418,3 +418,83 @@ def test_enrich_tripadvisor_failure_still_enriches(client):
 
     result = data["results"][0]
     assert result["status"] == "enriched"
+
+
+@respx.mock
+def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
+    """When id_hotel returns 404, fall back to Google text search."""
+    respx.post(HUBSPOT_SEARCH_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "12345",
+                        "properties": {
+                            "name": "Salguero Suites",
+                            "domain": None,
+                            "phone": None,
+                            "website": None,
+                            "address": None,
+                            "city": "Buenos Aires",
+                            "state": None,
+                            "zip": None,
+                            "country": "Argentina",
+                            "agente": "datos",
+                            "id_hotel": "INVALID_PLACE_ID",
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock Google Place Details — 404 (invalid ID)
+    respx.get("https://places.googleapis.com/v1/places/INVALID_PLACE_ID").mock(
+        return_value=Response(404, json={"error": {"code": 404, "message": "Place ID no longer valid"}})
+    )
+
+    # Mock Google text search fallback — succeeds
+    respx.post(GOOGLE_PLACES_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "places": [
+                    {
+                        "formattedAddress": "Salguero 1232, Buenos Aires, Argentina",
+                        "nationalPhoneNumber": "+54 11 5555 1234",
+                        "websiteUri": "https://salguerosuites.com",
+                        "addressComponents": [
+                            {"longText": "1232", "shortText": "1232", "types": ["street_number"]},
+                            {"longText": "Salguero", "shortText": "Salguero", "types": ["route"]},
+                            {"longText": "Buenos Aires", "shortText": "CABA", "types": ["locality"]},
+                            {"longText": "Buenos Aires", "shortText": "BA", "types": ["administrative_area_level_1"]},
+                            {"longText": "C1177", "shortText": "C1177", "types": ["postal_code"]},
+                            {"longText": "Argentina", "shortText": "AR", "types": ["country"]},
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock TripAdvisor
+    _mock_ta_search(name="Salguero Suites")
+    _mock_ta_details()
+
+    # Mock HubSpot update
+    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+
+    # Mock notes
+    _mock_notes()
+
+    resp = client.post("/datos")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["enriched"] == 1
+    assert data["errors"] == 0
+
+    result = data["results"][0]
+    assert result["status"] == "enriched"
+    assert len(result["changes"]) > 0
