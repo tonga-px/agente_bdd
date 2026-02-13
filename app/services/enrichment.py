@@ -8,7 +8,7 @@ from app.mappers.note_builder import build_enrichment_note
 from app.schemas.responses import CompanyResult, EnrichmentResponse
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
-from app.services.tripadvisor import TripAdvisorService
+from app.services.tripadvisor import TripAdvisorService, clean_name
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ class EnrichmentService:
                         props.id_tripadvisor.strip()
                     )
                 else:
-                    ta_query = build_search_query(props.name, props.city, props.country)
+                    ta_query = build_search_query(clean_name(props.name or ""), props.city, props.country)
                     lat_long = None
                     if place and place.location:
                         lat_long = f"{place.location.latitude},{place.location.longitude}"

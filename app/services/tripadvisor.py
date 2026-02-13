@@ -24,11 +24,16 @@ _STOP_WORDS = frozenset({
 })
 
 
-def _normalize(text: str) -> str:
-    """Lowercase, strip accents, and remove bracketed codes like [C81]."""
+def clean_name(text: str) -> str:
+    """Remove bracketed/parenthesized codes like [C81] or (code)."""
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"\(.*?\)", "", text)
-    nfkd = unicodedata.normalize("NFKD", text.lower().strip())
+    return text.strip()
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, strip accents, and remove bracketed codes."""
+    nfkd = unicodedata.normalize("NFKD", clean_name(text).lower())
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
@@ -68,7 +73,7 @@ class TripAdvisorService:
         }
         if lat_long:
             params["latLong"] = lat_long
-            params["radius"] = "1"
+            params["radius"] = "5"
             params["radiusUnit"] = "km"
 
         resp = await self._client.get(SEARCH_URL, params=params, headers=self._headers)
