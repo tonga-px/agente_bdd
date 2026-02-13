@@ -120,7 +120,7 @@ class EnrichmentService:
                         props.id_tripadvisor.strip()
                     )
                 else:
-                    ta_query = build_search_query(clean_name(props.name or ""), props.city, props.country)
+                    ta_query = clean_name(props.name or "")
                     lat_long = None
                     if place and place.location:
                         lat_long = f"{place.location.latitude},{place.location.longitude}"
