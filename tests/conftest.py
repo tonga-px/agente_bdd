@@ -1,7 +1,6 @@
 import httpx
 import pytest
-import respx
-from fastapi.testclient import TestClient
+from httpx import ASGITransport
 
 
 @pytest.fixture
@@ -12,7 +11,12 @@ def mock_env(monkeypatch):
 
 
 @pytest.fixture
-def client(mock_env):
-    from app.main import app
-    with TestClient(app) as c:
-        yield c
+async def client(mock_env):
+    from app.main import app, lifespan
+
+    async with lifespan(app):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as c:
+            yield c

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -22,3 +24,19 @@ class EnrichmentResponse(BaseModel):
     no_results: int
     errors: int
     results: list[CompanyResult]
+
+
+class JobSubmittedResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    created_at: datetime
+    finished_at: datetime | None = None
+    company_id: str | None = None
+    result: EnrichmentResponse | None = None
+    error: str | None = None

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.config import Settings
 from app.exceptions.custom import GooglePlacesError, HubSpotError, RateLimitError, TripAdvisorError
+from app.jobs import JobStore
 from app.exceptions.handlers import (
     google_places_error_handler,
     hubspot_error_handler,
@@ -43,8 +44,8 @@ async def lifespan(app: FastAPI):
             hubspot, google_places, tripadvisor=tripadvisor, overwrite=settings.overwrite_existing
         )
 
-        # Store on app.state so the dependency can access it via request.state
         app.state.enrichment_service = enrichment
+        app.state.job_store = JobStore()
         yield
 
 

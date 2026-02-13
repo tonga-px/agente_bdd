@@ -1,5 +1,7 @@
+import asyncio
+
 import respx
-from httpx import Response
+from httpx import AsyncClient, Response
 
 
 HUBSPOT_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search"
@@ -65,8 +67,29 @@ def _mock_notes():
     )
 
 
+async def submit_and_wait(client: AsyncClient, json=None, timeout: float = 5.0):
+    """POST /datos → 202, then poll GET /jobs/{job_id} until terminal state."""
+    resp = await client.post("/datos", json=json)
+    assert resp.status_code == 202
+
+    data = resp.json()
+    job_id = data["job_id"]
+    assert data["status"] == "pending"
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+        status_resp = await client.get(f"/jobs/{job_id}")
+        assert status_resp.status_code == 200
+        job = status_resp.json()
+        if job["status"] in ("completed", "failed"):
+            return job
+
+    raise TimeoutError(f"Job {job_id} did not complete within {timeout}s")
+
+
 @respx.mock
-def test_enrich_full_flow(client):
+async def test_enrich_full_flow(client):
     # Mock HubSpot search
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(
@@ -132,10 +155,10 @@ def test_enrich_full_flow(client):
     # Mock notes
     _mock_notes()
 
-    resp = client.post("/datos")
-    assert resp.status_code == 200
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
 
-    data = resp.json()
+    data = job["result"]
     assert data["total_found"] == 1
     assert data["enriched"] == 1
     assert data["no_results"] == 0
@@ -148,21 +171,21 @@ def test_enrich_full_flow(client):
 
 
 @respx.mock
-def test_enrich_no_companies(client):
+async def test_enrich_no_companies(client):
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(200, json={"results": []})
     )
 
-    resp = client.post("/datos")
-    assert resp.status_code == 200
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
 
-    data = resp.json()
+    data = job["result"]
     assert data["total_found"] == 0
     assert data["enriched"] == 0
 
 
 @respx.mock
-def test_enrich_no_google_results(client):
+async def test_enrich_no_google_results(client):
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(
             200,
@@ -200,17 +223,17 @@ def test_enrich_no_google_results(client):
         return_value=Response(200, json={})
     )
 
-    resp = client.post("/datos")
-    assert resp.status_code == 200
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
 
-    data = resp.json()
+    data = job["result"]
     assert data["total_found"] == 1
     assert data["no_results"] == 1
     assert data["results"][0]["status"] == "no_results"
 
 
 @respx.mock
-def test_enrich_with_id_hotel(client):
+async def test_enrich_with_id_hotel(client):
     # Mock HubSpot search — company has id_hotel
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(
@@ -268,10 +291,10 @@ def test_enrich_with_id_hotel(client):
     # Mock notes
     _mock_notes()
 
-    resp = client.post("/datos")
-    assert resp.status_code == 200
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
 
-    data = resp.json()
+    data = job["result"]
     assert data["total_found"] == 1
     assert data["enriched"] == 1
     assert data["errors"] == 0
@@ -283,7 +306,7 @@ def test_enrich_with_id_hotel(client):
 
 
 @respx.mock
-def test_enrich_with_company_id_in_body(client):
+async def test_enrich_with_company_id_in_body(client):
     # Mock HubSpot GET single company (no search needed)
     respx.get(HUBSPOT_GET_COMPANY_URL).mock(
         return_value=Response(
@@ -343,10 +366,10 @@ def test_enrich_with_company_id_in_body(client):
     # Mock notes
     _mock_notes()
 
-    resp = client.post("/datos", json={"company_id": "67890"})
-    assert resp.status_code == 200
+    job = await submit_and_wait(client, json={"company_id": "67890"})
+    assert job["status"] == "completed"
 
-    data = resp.json()
+    data = job["result"]
     assert data["total_found"] == 1
     assert data["enriched"] == 1
     assert data["errors"] == 0
@@ -359,7 +382,7 @@ def test_enrich_with_company_id_in_body(client):
 
 
 @respx.mock
-def test_enrich_tripadvisor_failure_still_enriches(client):
+async def test_enrich_tripadvisor_failure_still_enriches(client):
     """TripAdvisor failure should not prevent Google Places enrichment."""
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(
@@ -421,10 +444,10 @@ def test_enrich_tripadvisor_failure_still_enriches(client):
     # Mock notes
     _mock_notes()
 
-    resp = client.post("/datos")
-    assert resp.status_code == 200
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
 
-    data = resp.json()
+    data = job["result"]
     assert data["enriched"] == 1
     assert data["errors"] == 0
 
@@ -433,7 +456,7 @@ def test_enrich_tripadvisor_failure_still_enriches(client):
 
 
 @respx.mock
-def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
+async def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
     """When id_hotel returns 404, fall back to Google text search."""
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(
@@ -500,13 +523,35 @@ def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
     # Mock notes
     _mock_notes()
 
-    resp = client.post("/datos")
-    assert resp.status_code == 200
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
 
-    data = resp.json()
+    data = job["result"]
     assert data["enriched"] == 1
     assert data["errors"] == 0
 
     result = data["results"][0]
     assert result["status"] == "enriched"
     assert len(result["changes"]) > 0
+
+
+async def test_get_job_nonexistent(client):
+    """GET /jobs/{nonexistent} returns 404."""
+    resp = await client.get("/jobs/does_not_exist")
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Job not found"
+
+
+@respx.mock
+async def test_sync_endpoint(client):
+    """POST /datos/sync still works synchronously for backward compat."""
+    respx.post(HUBSPOT_SEARCH_URL).mock(
+        return_value=Response(200, json={"results": []})
+    )
+
+    resp = await client.post("/datos/sync")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["total_found"] == 0
+    assert data["enriched"] == 0
