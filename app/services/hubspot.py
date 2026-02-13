@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 import httpx
 
@@ -132,7 +133,7 @@ class HubSpotService:
         payload = {
             "properties": {
                 "hs_note_body": body,
-                "hs_timestamp": None,
+                "hs_timestamp": datetime.now(timezone.utc).isoformat(),
             },
             "associations": [
                 {
