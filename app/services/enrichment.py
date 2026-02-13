@@ -125,7 +125,9 @@ class EnrichmentService:
                     if place and place.location:
                         lat_long = f"{place.location.latitude},{place.location.longitude}"
                     logger.info("Searching TripAdvisor for: %s (latLong=%s)", ta_query, lat_long)
-                    ta_location = await self._tripadvisor.search_and_get_details(ta_query, lat_long=lat_long)
+                    ta_location = await self._tripadvisor.search_and_get_details(
+                        ta_query, company_name=props.name, lat_long=lat_long,
+                    )
             except Exception:
                 logger.exception(
                     "TripAdvisor failed for company %s, continuing without it",
