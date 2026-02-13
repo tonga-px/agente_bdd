@@ -25,9 +25,13 @@ class EnrichmentService:
         self._google = google_places
         self._overwrite = overwrite
 
-    async def run(self) -> EnrichmentResponse:
-        all_companies = await self._hubspot.search_companies()
-        companies = all_companies[:MAX_COMPANIES_PER_REQUEST]
+    async def run(self, company_id: str | None = None) -> EnrichmentResponse:
+        if company_id:
+            company = await self._hubspot.get_company(company_id)
+            companies = [company]
+        else:
+            all_companies = await self._hubspot.search_companies()
+            companies = all_companies[:MAX_COMPANIES_PER_REQUEST]
         results: list[CompanyResult] = []
         enriched = 0
         no_results = 0

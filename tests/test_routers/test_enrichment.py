@@ -4,6 +4,7 @@ from httpx import Response
 
 HUBSPOT_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search"
 HUBSPOT_COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies/12345"
+HUBSPOT_GET_COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies/67890"
 GOOGLE_PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
 GOOGLE_DETAILS_URL = "https://places.googleapis.com/v1/places/ChIJN1t_tDeuEmsRUsoyG83frY4"
 
@@ -199,5 +200,74 @@ def test_enrich_with_id_hotel(client):
 
     result = data["results"][0]
     assert result["company_id"] == "12345"
+    assert result["status"] == "enriched"
+    assert len(result["changes"]) > 0
+
+
+@respx.mock
+def test_enrich_with_company_id_in_body(client):
+    # Mock HubSpot GET single company (no search needed)
+    respx.get(HUBSPOT_GET_COMPANY_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "id": "67890",
+                "properties": {
+                    "name": "Single Corp",
+                    "domain": None,
+                    "phone": None,
+                    "website": None,
+                    "address": None,
+                    "city": "Lima",
+                    "state": None,
+                    "zip": None,
+                    "country": "Peru",
+                    "agente": "",
+                    "id_hotel": None,
+                },
+            },
+        )
+    )
+
+    # Mock Google Places text search
+    respx.post(GOOGLE_PLACES_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "places": [
+                    {
+                        "formattedAddress": "Av. Javier Prado 456, Lima, Peru",
+                        "nationalPhoneNumber": "+51 1 987 6543",
+                        "websiteUri": "https://singlecorp.pe",
+                        "addressComponents": [
+                            {"longText": "456", "shortText": "456", "types": ["street_number"]},
+                            {"longText": "Av. Javier Prado", "shortText": "Av. Javier Prado", "types": ["route"]},
+                            {"longText": "Lima", "shortText": "Lima", "types": ["locality"]},
+                            {"longText": "Lima", "shortText": "Lima", "types": ["administrative_area_level_1"]},
+                            {"longText": "15000", "shortText": "15000", "types": ["postal_code"]},
+                            {"longText": "Peru", "shortText": "PE", "types": ["country"]},
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock HubSpot update
+    respx.patch("https://api.hubapi.com/crm/v3/objects/companies/67890").mock(
+        return_value=Response(200, json={})
+    )
+
+    resp = client.post("/datos", json={"company_id": "67890"})
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["total_found"] == 1
+    assert data["enriched"] == 1
+    assert data["errors"] == 0
+
+    result = data["results"][0]
+    assert result["company_id"] == "67890"
+    assert result["company_name"] == "Single Corp"
     assert result["status"] == "enriched"
     assert len(result["changes"]) > 0

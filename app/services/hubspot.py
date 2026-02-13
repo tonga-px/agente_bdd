@@ -87,6 +87,22 @@ class HubSpotService:
         logger.info("Found %d companies with agente='%s'", len(companies), agente_value)
         return companies
 
+    async def get_company(self, company_id: str) -> HubSpotCompany:
+        url = f"{COMPANY_URL}/{company_id}"
+        resp = await self._client.get(
+            url,
+            params={"properties": ",".join(SEARCH_PROPERTIES)},
+            headers=self._headers,
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Fetched company %s", company_id)
+        return HubSpotCompany(**resp.json())
+
     async def update_company(
         self, company_id: str, properties: dict[str, str]
     ) -> None:
