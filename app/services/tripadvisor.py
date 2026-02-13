@@ -65,6 +65,8 @@ class TripAdvisorService:
         }
         if lat_long:
             params["latLong"] = lat_long
+            params["radius"] = "1"
+            params["radiusUnit"] = "km"
 
         resp = await self._client.get(SEARCH_URL, params=params, headers=self._headers)
 
