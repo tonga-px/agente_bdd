@@ -13,7 +13,7 @@ from app.services.tripadvisor import TripAdvisorService
 
 logger = logging.getLogger(__name__)
 
-HUBSPOT_DELAY = 0.1  # seconds between HubSpot calls
+HUBSPOT_DELAY = 0.5  # seconds between HubSpot calls
 MAX_COMPANIES_PER_REQUEST = 1
 
 
