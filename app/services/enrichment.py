@@ -11,7 +11,7 @@ from app.services.hubspot import HubSpotService
 logger = logging.getLogger(__name__)
 
 HUBSPOT_DELAY = 0.1  # seconds between HubSpot calls
-MAX_COMPANIES_PER_REQUEST = 30
+MAX_COMPANIES_PER_REQUEST = 10
 
 
 class EnrichmentService:
