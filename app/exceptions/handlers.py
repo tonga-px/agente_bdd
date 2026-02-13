@@ -3,7 +3,7 @@ import logging
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from .custom import GooglePlacesError, HubSpotError, RateLimitError
+from .custom import GooglePlacesError, HubSpotError, RateLimitError, TripAdvisorError
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,14 @@ async def google_places_error_handler(_request: Request, exc: GooglePlacesError)
     return JSONResponse(
         status_code=502,
         content={"detail": f"Google Places error: {exc.message}"},
+    )
+
+
+async def tripadvisor_error_handler(_request: Request, exc: TripAdvisorError) -> JSONResponse:
+    logger.error("TripAdvisor error: %s (status=%s)", exc.message, exc.status_code)
+    return JSONResponse(
+        status_code=502,
+        content={"detail": f"TripAdvisor error: {exc.message}"},
     )
 
 

@@ -4,9 +4,12 @@ import logging
 from app.exceptions.custom import RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
+from app.mappers.note_builder import build_enrichment_note
+from app.mappers.tripadvisor_mapper import map_tripadvisor_to_hubspot
 from app.schemas.responses import CompanyResult, EnrichmentResponse
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
+from app.services.tripadvisor import TripAdvisorService
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +22,12 @@ class EnrichmentService:
         self,
         hubspot: HubSpotService,
         google_places: GooglePlacesService,
+        tripadvisor: TripAdvisorService | None = None,
         overwrite: bool = False,
     ):
         self._hubspot = hubspot
         self._google = google_places
+        self._tripadvisor = tripadvisor
         self._overwrite = overwrite
 
     async def run(self, company_id: str | None = None) -> EnrichmentResponse:
@@ -87,6 +92,7 @@ class EnrichmentService:
     async def _process_company(self, company):
         props = company.properties
 
+        # --- Google Places ---
         if props.id_hotel and props.id_hotel.strip():
             place_id = props.id_hotel.strip()
             logger.info("Looking up Google Place ID: %s", place_id)
@@ -96,23 +102,64 @@ class EnrichmentService:
             logger.info("Searching Google Places for: %s", query)
             place = await self._google.text_search(query)
 
-        if place is None:
-            # Still clear agente so it's not reprocessed
+        # --- TripAdvisor (isolated, never blocks enrichment) ---
+        ta_location = None
+        if self._tripadvisor:
+            try:
+                if props.id_tripadvisor and props.id_tripadvisor.strip():
+                    logger.info("Looking up TripAdvisor ID: %s", props.id_tripadvisor)
+                    ta_location = await self._tripadvisor.get_details(
+                        props.id_tripadvisor.strip()
+                    )
+                else:
+                    ta_query = build_search_query(props.name, props.city, props.country)
+                    logger.info("Searching TripAdvisor for: %s", ta_query)
+                    ta_location = await self._tripadvisor.search_and_get_details(ta_query)
+            except Exception:
+                logger.exception(
+                    "TripAdvisor failed for company %s, continuing without it",
+                    company.id,
+                )
+
+        # --- Merge results ---
+        if place is None and ta_location is None:
             await self._hubspot.update_company(company.id, {"agente": ""})
             return CompanyResult(
                 company_id=company.id,
                 company_name=props.name,
                 status="no_results",
-                message=f"No Google Places results for: {query}",
+                message="No results from Google Places or TripAdvisor",
             )
 
-        parsed = parse_address_components(place.addressComponents)
-        updates, changes = merge_fields(props, place, parsed, self._overwrite)
+        updates: dict[str, str] = {}
+        changes = []
+
+        if place is not None:
+            parsed = parse_address_components(place.addressComponents)
+            google_updates, google_changes = merge_fields(
+                props, place, parsed, self._overwrite
+            )
+            updates.update(google_updates)
+            changes.extend(google_changes)
+
+        if ta_location is not None:
+            ta_updates = map_tripadvisor_to_hubspot(ta_location)
+            updates.update(ta_updates)
 
         # Always clear agente
         updates["agente"] = ""
 
         await self._hubspot.update_company(company.id, updates)
+
+        # --- Create enrichment note ---
+        try:
+            note_body = build_enrichment_note(props.name, place, ta_location)
+            await self._hubspot.create_note(company.id, note_body)
+        except Exception:
+            logger.exception(
+                "Failed to create note for company %s, enrichment still succeeded",
+                company.id,
+            )
 
         return CompanyResult(
             company_id=company.id,

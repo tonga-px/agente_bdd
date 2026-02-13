@@ -13,6 +13,14 @@ class HubSpotCompanyProperties(BaseModel):
     country: str | None = None
     agente: str | None = None
     id_hotel: str | None = None
+    id_tripadvisor: str | None = None
+    ta_rating: str | None = None
+    ta_reviews_count: str | None = None
+    ta_ranking: str | None = None
+    ta_price_level: str | None = None
+    ta_category: str | None = None
+    ta_subcategory: str | None = None
+    ta_url: str | None = None
 
 
 class HubSpotCompany(BaseModel):

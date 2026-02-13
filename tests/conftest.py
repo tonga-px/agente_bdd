@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 def mock_env(monkeypatch):
     monkeypatch.setenv("HUBSPOT_ACCESS_TOKEN", "test-token")
     monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "test-key")
+    monkeypatch.setenv("TRIPADVISOR_API_KEY", "test-ta-key")
 
 
 @pytest.fixture

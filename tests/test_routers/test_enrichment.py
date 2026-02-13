@@ -5,8 +5,57 @@ from httpx import Response
 HUBSPOT_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search"
 HUBSPOT_COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies/12345"
 HUBSPOT_GET_COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies/67890"
+HUBSPOT_NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
 GOOGLE_PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
 GOOGLE_DETAILS_URL = "https://places.googleapis.com/v1/places/ChIJN1t_tDeuEmsRUsoyG83frY4"
+TA_SEARCH_URL = "https://api.content.tripadvisor.com/api/v1/location/search"
+TA_DETAILS_URL = "https://api.content.tripadvisor.com/api/v1/location/999/details"
+
+
+def _mock_ta_search(location_id="999", name="Acme Corp"):
+    """Mock TripAdvisor search returning one result."""
+    respx.get(TA_SEARCH_URL).mock(
+        return_value=Response(
+            200,
+            json={"data": [{"location_id": location_id, "name": name}]},
+        )
+    )
+
+
+def _mock_ta_details(location_id="999"):
+    """Mock TripAdvisor details."""
+    respx.get(
+        f"https://api.content.tripadvisor.com/api/v1/location/{location_id}/details"
+    ).mock(
+        return_value=Response(
+            200,
+            json={
+                "location_id": location_id,
+                "name": "Acme Corp",
+                "rating": "4.5",
+                "num_reviews": "1234",
+                "ranking_data": {"ranking_string": "#3 of 245 hotels in Santiago"},
+                "price_level": "$$",
+                "category": {"name": "Hotel"},
+                "subcategory": [{"name": "Boutique"}],
+                "web_url": "https://www.tripadvisor.com/Hotel_Review-999",
+            },
+        )
+    )
+
+
+def _mock_ta_empty():
+    """Mock TripAdvisor search returning no results."""
+    respx.get(TA_SEARCH_URL).mock(
+        return_value=Response(200, json={"data": []})
+    )
+
+
+def _mock_notes():
+    """Mock HubSpot notes creation."""
+    respx.post(HUBSPOT_NOTES_URL).mock(
+        return_value=Response(200, json={"id": "note-1"})
+    )
 
 
 @respx.mock
@@ -61,8 +110,15 @@ def test_enrich_full_flow(client):
         )
     )
 
+    # Mock TripAdvisor
+    _mock_ta_search()
+    _mock_ta_details()
+
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+
+    # Mock notes
+    _mock_notes()
 
     resp = client.post("/datos")
     assert resp.status_code == 200
@@ -123,6 +179,9 @@ def test_enrich_no_google_results(client):
     respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(200, json={"places": []})
     )
+
+    # Mock TripAdvisor — also no results
+    _mock_ta_empty()
 
     # Mock HubSpot update (clearing agente)
     respx.patch("https://api.hubapi.com/crm/v3/objects/companies/99999").mock(
@@ -187,8 +246,15 @@ def test_enrich_with_id_hotel(client):
         )
     )
 
+    # Mock TripAdvisor
+    _mock_ta_search()
+    _mock_ta_details()
+
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+
+    # Mock notes
+    _mock_notes()
 
     resp = client.post("/datos")
     assert resp.status_code == 200
@@ -253,10 +319,17 @@ def test_enrich_with_company_id_in_body(client):
         )
     )
 
+    # Mock TripAdvisor
+    _mock_ta_search(name="Single Corp")
+    _mock_ta_details()
+
     # Mock HubSpot update
     respx.patch("https://api.hubapi.com/crm/v3/objects/companies/67890").mock(
         return_value=Response(200, json={})
     )
+
+    # Mock notes
+    _mock_notes()
 
     resp = client.post("/datos", json={"company_id": "67890"})
     assert resp.status_code == 200
@@ -271,3 +344,77 @@ def test_enrich_with_company_id_in_body(client):
     assert result["company_name"] == "Single Corp"
     assert result["status"] == "enriched"
     assert len(result["changes"]) > 0
+
+
+@respx.mock
+def test_enrich_tripadvisor_failure_still_enriches(client):
+    """TripAdvisor failure should not prevent Google Places enrichment."""
+    respx.post(HUBSPOT_SEARCH_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "12345",
+                        "properties": {
+                            "name": "Acme Corp",
+                            "domain": None,
+                            "phone": None,
+                            "website": None,
+                            "address": None,
+                            "city": "Santiago",
+                            "state": None,
+                            "zip": None,
+                            "country": "Chile",
+                            "agente": "datos",
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock Google Places search — succeeds
+    respx.post(GOOGLE_PLACES_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "places": [
+                    {
+                        "formattedAddress": "Av. Providencia 123, Santiago, Chile",
+                        "nationalPhoneNumber": "+56 2 1234 5678",
+                        "websiteUri": "https://acme.cl",
+                        "addressComponents": [
+                            {"longText": "123", "shortText": "123", "types": ["street_number"]},
+                            {"longText": "Av. Providencia", "shortText": "Av. Providencia", "types": ["route"]},
+                            {"longText": "Santiago", "shortText": "Santiago", "types": ["locality"]},
+                            {"longText": "Región Metropolitana", "shortText": "RM", "types": ["administrative_area_level_1"]},
+                            {"longText": "7500000", "shortText": "7500000", "types": ["postal_code"]},
+                            {"longText": "Chile", "shortText": "CL", "types": ["country"]},
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock TripAdvisor — fails with 500
+    respx.get(TA_SEARCH_URL).mock(
+        return_value=Response(500, text="Internal Server Error")
+    )
+
+    # Mock HubSpot update
+    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+
+    # Mock notes
+    _mock_notes()
+
+    resp = client.post("/datos")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["enriched"] == 1
+    assert data["errors"] == 0
+
+    result = data["results"][0]
+    assert result["status"] == "enriched"

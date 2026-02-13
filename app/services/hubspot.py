@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search"
 COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies"
 
+NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
+
 SEARCH_PROPERTIES = [
     "name",
     "domain",
@@ -22,6 +24,14 @@ SEARCH_PROPERTIES = [
     "country",
     "agente",
     "id_hotel",
+    "id_tripadvisor",
+    "ta_rating",
+    "ta_reviews_count",
+    "ta_ranking",
+    "ta_price_level",
+    "ta_category",
+    "ta_subcategory",
+    "ta_url",
 ]
 
 
@@ -117,3 +127,33 @@ class HubSpotService:
             raise HubSpotError(resp.text, status_code=resp.status_code)
 
         logger.info("Updated company %s", company_id)
+
+    async def create_note(self, company_id: str, body: str) -> None:
+        payload = {
+            "properties": {
+                "hs_note_body": body,
+                "hs_timestamp": None,
+            },
+            "associations": [
+                {
+                    "to": {"id": company_id},
+                    "types": [
+                        {
+                            "associationCategory": "HUBSPOT_DEFINED",
+                            "associationTypeId": 190,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        resp = await self._client.post(
+            NOTES_URL, json=payload, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Created note for company %s", company_id)
