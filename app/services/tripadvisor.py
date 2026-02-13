@@ -35,12 +35,18 @@ def _significant_tokens(name: str) -> set[str]:
 
 
 def names_match(company_name: str, ta_name: str) -> bool:
-    """Check if there is meaningful word overlap between two names."""
+    """Check if there is meaningful word overlap between two names.
+
+    If the company name has 2+ significant tokens, at least 2 must match
+    to avoid false positives on generic words like 'lago', 'sol', etc.
+    """
     company_tokens = _significant_tokens(company_name)
     ta_tokens = _significant_tokens(ta_name)
     if not company_tokens or not ta_tokens:
         return False
-    return bool(company_tokens & ta_tokens)
+    overlap = company_tokens & ta_tokens
+    required = min(2, len(company_tokens))
+    return len(overlap) >= required
 
 
 class TripAdvisorService:
