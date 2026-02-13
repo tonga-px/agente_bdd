@@ -161,8 +161,8 @@ class EnrichmentService:
         await self._hubspot.update_company(company.id, updates)
 
         # --- Create enrichment note ---
+        note_body = build_enrichment_note(props.name, place, ta_location)
         try:
-            note_body = build_enrichment_note(props.name, place, ta_location)
             await self._hubspot.create_note(company.id, note_body)
         except Exception:
             logger.exception(
@@ -175,4 +175,5 @@ class EnrichmentService:
             company_name=props.name,
             status="enriched",
             changes=changes,
+            note=note_body,
         )

@@ -13,6 +13,7 @@ class CompanyResult(BaseModel):
     status: str  # "enriched" | "no_results" | "error"
     message: str | None = None
     changes: list[FieldChange] = []
+    note: str | None = None
 
 
 class EnrichmentResponse(BaseModel):
