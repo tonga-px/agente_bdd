@@ -68,7 +68,6 @@ class TripAdvisorService:
         params = {
             "key": self._api_key,
             "searchQuery": query,
-            "category": "hotels",
             "language": "es",
         }
         if lat_long:
