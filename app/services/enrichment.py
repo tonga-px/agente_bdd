@@ -5,7 +5,6 @@ from app.exceptions.custom import GooglePlacesError, RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
 from app.mappers.note_builder import build_enrichment_note
-from app.mappers.tripadvisor_mapper import map_tripadvisor_to_hubspot
 from app.schemas.responses import CompanyResult, EnrichmentResponse
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
@@ -150,10 +149,6 @@ class EnrichmentService:
             )
             updates.update(google_updates)
             changes.extend(google_changes)
-
-        if ta_location is not None:
-            ta_updates = map_tripadvisor_to_hubspot(ta_location)
-            updates.update(ta_updates)
 
         # Always clear agente
         updates["agente"] = ""

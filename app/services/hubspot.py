@@ -26,13 +26,6 @@ SEARCH_PROPERTIES = [
     "agente",
     "id_hotel",
     "id_tripadvisor",
-    "ta_rating",
-    "ta_reviews_count",
-    "ta_ranking",
-    "ta_price_level",
-    "ta_category",
-    "ta_subcategory",
-    "ta_url",
 ]
 
 
