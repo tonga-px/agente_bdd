@@ -8,6 +8,7 @@ from app.schemas.google_places import GooglePlace, TextSearchResponse
 logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
+DETAILS_URL = "https://places.googleapis.com/v1/places"
 
 FIELD_MASK = (
     "places.formattedAddress,"
@@ -15,6 +16,14 @@ FIELD_MASK = (
     "places.internationalPhoneNumber,"
     "places.websiteUri,"
     "places.addressComponents"
+)
+
+DETAILS_FIELD_MASK = (
+    "formattedAddress,"
+    "nationalPhoneNumber,"
+    "internationalPhoneNumber,"
+    "websiteUri,"
+    "addressComponents"
 )
 
 
@@ -53,3 +62,20 @@ class GooglePlacesService:
             return None
 
         return data.places[0]
+
+    async def get_place_details(self, place_id: str) -> GooglePlace | None:
+        headers = {
+            "X-Goog-Api-Key": self._api_key,
+            "X-Goog-FieldMask": DETAILS_FIELD_MASK,
+        }
+
+        resp = await self._client.get(
+            f"{DETAILS_URL}/{place_id}", headers=headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("Google Places")
+        if resp.status_code >= 400:
+            raise GooglePlacesError(resp.text, status_code=resp.status_code)
+
+        return GooglePlace(**resp.json())

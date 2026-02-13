@@ -82,10 +82,15 @@ class EnrichmentService:
 
     async def _process_company(self, company):
         props = company.properties
-        query = build_search_query(props.name, props.city, props.country)
-        logger.info("Searching Google Places for: %s", query)
 
-        place = await self._google.text_search(query)
+        if props.id_hotel and props.id_hotel.strip():
+            place_id = props.id_hotel.strip()
+            logger.info("Looking up Google Place ID: %s", place_id)
+            place = await self._google.get_place_details(place_id)
+        else:
+            query = build_search_query(props.name, props.city, props.country)
+            logger.info("Searching Google Places for: %s", query)
+            place = await self._google.text_search(query)
 
         if place is None:
             # Still clear agente so it's not reprocessed

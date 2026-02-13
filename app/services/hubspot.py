@@ -21,6 +21,7 @@ SEARCH_PROPERTIES = [
     "zip",
     "country",
     "agente",
+    "id_hotel",
 ]
 
 

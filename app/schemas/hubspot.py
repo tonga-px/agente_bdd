@@ -12,6 +12,7 @@ class HubSpotCompanyProperties(BaseModel):
     zip: str | None = None
     country: str | None = None
     agente: str | None = None
+    id_hotel: str | None = None
 
 
 class HubSpotCompany(BaseModel):
