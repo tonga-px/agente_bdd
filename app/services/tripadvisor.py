@@ -20,7 +20,7 @@ class TripAdvisorService:
         self._api_key = api_key
         self._headers = {"Referer": referer}
 
-    async def search(self, query: str) -> str | None:
+    async def search(self, query: str, lat_long: str | None = None) -> str | None:
         """Search for a location and return its location_id, or None."""
         params = {
             "key": self._api_key,
@@ -28,6 +28,8 @@ class TripAdvisorService:
             "category": "hotels",
             "language": "es",
         }
+        if lat_long:
+            params["latLong"] = lat_long
 
         resp = await self._client.get(SEARCH_URL, params=params, headers=self._headers)
 
@@ -60,9 +62,9 @@ class TripAdvisorService:
 
         return TripAdvisorLocation(**resp.json())
 
-    async def search_and_get_details(self, query: str) -> TripAdvisorLocation | None:
+    async def search_and_get_details(self, query: str, lat_long: str | None = None) -> TripAdvisorLocation | None:
         """Search by query and return full details, or None."""
-        location_id = await self.search(query)
+        location_id = await self.search(query, lat_long=lat_long)
         if location_id is None:
             return None
         return await self.get_details(location_id)

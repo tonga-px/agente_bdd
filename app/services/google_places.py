@@ -15,7 +15,8 @@ FIELD_MASK = (
     "places.nationalPhoneNumber,"
     "places.internationalPhoneNumber,"
     "places.websiteUri,"
-    "places.addressComponents"
+    "places.addressComponents,"
+    "places.location"
 )
 
 DETAILS_FIELD_MASK = (
@@ -23,7 +24,8 @@ DETAILS_FIELD_MASK = (
     "nationalPhoneNumber,"
     "internationalPhoneNumber,"
     "websiteUri,"
-    "addressComponents"
+    "addressComponents,"
+    "location"
 )
 
 
