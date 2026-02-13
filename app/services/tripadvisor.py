@@ -68,12 +68,13 @@ class TripAdvisorService:
         params = {
             "key": self._api_key,
             "searchQuery": query,
+            "category": "hotels",
             "language": "es",
         }
         if lat_long:
             params["latLong"] = lat_long
-            params["radius"] = "100"
-            params["radiusUnit"] = "m"
+            params["radius"] = "1"
+            params["radiusUnit"] = "km"
 
         resp = await self._client.get(SEARCH_URL, params=params, headers=self._headers)
 
