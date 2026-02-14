@@ -114,10 +114,9 @@ class ProspeccionService:
             call_attempts.append(attempt)
 
             if attempt.status == "connected" and attempt.conversation_id:
-                conversation = await self._elevenlabs.get_conversation(
+                successful_conversation = await self._fetch_with_analysis(
                     attempt.conversation_id
                 )
-                successful_conversation = conversation
                 break
 
         # All phones failed
@@ -290,6 +289,36 @@ class ProspeccionService:
                 status="error",
                 error=str(exc),
             )
+
+    async def _fetch_with_analysis(
+        self, conversation_id: str, retries: int = 6, delay: float = 5.0
+    ) -> ConversationResponse:
+        """Fetch conversation, retrying until analysis.extracted_data is populated."""
+        for attempt in range(retries):
+            if attempt > 0:
+                await asyncio.sleep(delay)
+            conversation = await self._elevenlabs.get_conversation(
+                conversation_id
+            )
+            if conversation.analysis and conversation.analysis.extracted_data:
+                logger.info(
+                    "Conversation %s analysis ready after %d attempts",
+                    conversation_id,
+                    attempt + 1,
+                )
+                return conversation
+            logger.info(
+                "Conversation %s analysis not ready yet (attempt %d/%d)",
+                conversation_id,
+                attempt + 1,
+                retries,
+            )
+        logger.warning(
+            "Conversation %s analysis not available after %d retries, proceeding without",
+            conversation_id,
+            retries,
+        )
+        return conversation
 
     async def _poll_conversation(
         self, conversation_id: str
