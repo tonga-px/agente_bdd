@@ -65,7 +65,9 @@ async def lifespan(app: FastAPI):
                 settings.elevenlabs_agent_id,
                 settings.elevenlabs_phone_number_id,
             )
-            app.state.prospeccion_service = ProspeccionService(hubspot, elevenlabs)
+            app.state.prospeccion_service = ProspeccionService(
+                hubspot, elevenlabs, google_places=google_places
+            )
         else:
             app.state.prospeccion_service = None
 

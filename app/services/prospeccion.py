@@ -3,11 +3,13 @@ import logging
 import re
 from datetime import datetime, timezone
 
+from app.mappers.address_mapper import parse_address_components
 from app.mappers.call_note_builder import build_prospeccion_note
 from app.schemas.elevenlabs import ConversationResponse
 from app.schemas.hubspot import HubSpotCompany, HubSpotContact, HubSpotEmail, HubSpotNote
 from app.schemas.responses import CallAttempt, ExtractedCallData, ProspeccionResponse
 from app.services.elevenlabs import ElevenLabsService
+from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
 
 logger = logging.getLogger(__name__)
@@ -50,10 +52,31 @@ def _split_name(full_name: str) -> tuple[str, str]:
     return "", ""
 
 
+def _parse_num_rooms(raw: str) -> int | None:
+    """Extract the first integer from a num_rooms string."""
+    match = re.search(r"\d+", raw)
+    return int(match.group()) if match else None
+
+
+def _compute_market_fit(num_rooms: int) -> str:
+    """Classify hotel by room count."""
+    if num_rooms <= 13:
+        return "Hormiga"
+    if num_rooms <= 27:
+        return "Conejo"
+    return "Elefante"
+
+
 class ProspeccionService:
-    def __init__(self, hubspot: HubSpotService, elevenlabs: ElevenLabsService):
+    def __init__(
+        self,
+        hubspot: HubSpotService,
+        elevenlabs: ElevenLabsService,
+        google_places: GooglePlacesService | None = None,
+    ):
         self._hubspot = hubspot
         self._elevenlabs = elevenlabs
+        self._google = google_places
 
     async def run(self, company_id: str | None = None) -> ProspeccionResponse:
         if company_id:
@@ -152,8 +175,15 @@ class ProspeccionService:
         transcript_text = self._format_transcript(successful_conversation)
 
         # Update HubSpot
-        hubspot_updates = self._build_hubspot_updates(extracted)
+        hubspot_updates = self._build_hubspot_updates(extracted, company)
         hubspot_updates["agente"] = ""
+
+        # State lookup (best-effort, only if empty)
+        if not (company.properties.state or "").strip():
+            state = await self._lookup_state(company)
+            if state:
+                hubspot_updates["state"] = state
+
         await self._hubspot.update_company(company.id, hubspot_updates)
 
         # Build and create note
@@ -404,8 +434,42 @@ class ProspeccionService:
             lines.append(f"{role}: {msg}")
         return "\n".join(lines)
 
-    def _build_hubspot_updates(self, extracted: ExtractedCallData) -> dict[str, str]:
-        return {}
+    def _build_hubspot_updates(
+        self, extracted: ExtractedCallData, company: HubSpotCompany
+    ) -> dict[str, str]:
+        updates: dict[str, str] = {}
+
+        if extracted.num_rooms and not (company.properties.market_fit or "").strip():
+            parsed = _parse_num_rooms(extracted.num_rooms)
+            if parsed is not None:
+                updates["market_fit"] = _compute_market_fit(parsed)
+
+        return updates
+
+    async def _lookup_state(self, company: HubSpotCompany) -> str | None:
+        """Look up state via Google Places (best-effort)."""
+        if self._google is None:
+            return None
+        try:
+            props = company.properties
+            place = None
+            if props.id_hotel and props.id_hotel.strip():
+                try:
+                    place = await self._google.get_place_details(props.id_hotel.strip())
+                except Exception:
+                    logger.warning(
+                        "Google Place ID %s failed, falling back to text search",
+                        props.id_hotel,
+                    )
+            if place is None:
+                query = build_search_query(props.name, props.city, props.country)
+                place = await self._google.text_search(query)
+            if place and place.addressComponents:
+                parsed = parse_address_components(place.addressComponents)
+                return parsed.state
+        except Exception:
+            logger.exception("State lookup failed for company %s", company.id)
+        return None
 
     async def _upsert_decision_maker_contact(
         self,

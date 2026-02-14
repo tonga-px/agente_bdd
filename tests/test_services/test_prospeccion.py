@@ -17,9 +17,16 @@ from app.schemas.hubspot import (
     HubSpotContactProperties,
     HubSpotNote,
 )
+from app.schemas.google_places import AddressComponent, GooglePlace
 from app.services.elevenlabs import ElevenLabsService
+from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
-from app.services.prospeccion import ProspeccionService, _split_name
+from app.services.prospeccion import (
+    ProspeccionService,
+    _compute_market_fit,
+    _parse_num_rooms,
+    _split_name,
+)
 
 
 def _make_company(
@@ -607,3 +614,297 @@ async def test_contact_upsert_failure_doesnt_block():
         result = await service.run(company_id="C1")
 
     assert result.status == "completed"
+
+
+# --- _parse_num_rooms tests ---
+
+def test_parse_num_rooms_plain_number():
+    assert _parse_num_rooms("80") == 80
+
+
+def test_parse_num_rooms_with_text():
+    assert _parse_num_rooms("80 habitaciones") == 80
+
+
+def test_parse_num_rooms_approx():
+    assert _parse_num_rooms("aprox. 50") == 50
+
+
+def test_parse_num_rooms_no_sabe():
+    assert _parse_num_rooms("no sabe") is None
+
+
+def test_parse_num_rooms_empty():
+    assert _parse_num_rooms("") is None
+
+
+# --- _compute_market_fit tests ---
+
+def test_compute_market_fit_hormiga_min():
+    assert _compute_market_fit(1) == "Hormiga"
+
+
+def test_compute_market_fit_hormiga_max():
+    assert _compute_market_fit(13) == "Hormiga"
+
+
+def test_compute_market_fit_conejo_min():
+    assert _compute_market_fit(14) == "Conejo"
+
+
+def test_compute_market_fit_conejo_max():
+    assert _compute_market_fit(27) == "Conejo"
+
+
+def test_compute_market_fit_elefante_min():
+    assert _compute_market_fit(28) == "Elefante"
+
+
+def test_compute_market_fit_elefante_large():
+    assert _compute_market_fit(100) == "Elefante"
+
+
+# --- market_fit integration tests ---
+
+def _make_google_place_with_state(state: str = "Región Metropolitana"):
+    return GooglePlace(
+        formattedAddress="Av. Test 123",
+        addressComponents=[
+            AddressComponent(
+                longText=state,
+                shortText=state[:2],
+                types=["administrative_area_level_1"],
+            ),
+            AddressComponent(
+                longText="Santiago",
+                shortText="Santiago",
+                types=["locality"],
+            ),
+        ],
+    )
+
+
+def _setup_successful_call(hubspot, elevenlabs, company, conversation=None):
+    """Helper to set up mocks for a successful call flow."""
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=True, conversation_id="conv-1"
+    )
+    conv = conversation or _done_conversation()
+    elevenlabs.get_conversation.side_effect = [conv, conv]
+
+
+@pytest.mark.asyncio
+async def test_market_fit_written_to_hubspot():
+    """num_rooms=80 → market_fit=Elefante written to HubSpot."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    _setup_successful_call(hubspot, elevenlabs, company)
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert props["market_fit"] == "Elefante"
+    assert props["agente"] == ""
+
+
+@pytest.mark.asyncio
+async def test_market_fit_skipped_when_already_set():
+    """Company already has market_fit → not overwritten."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = HubSpotCompany(
+        id="C1",
+        properties=HubSpotCompanyProperties(
+            name="Hotel Test",
+            phone="+56 1 1111",
+            agente="llamada_prospeccion",
+            market_fit="Conejo",
+        ),
+    )
+    _setup_successful_call(hubspot, elevenlabs, company)
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert "market_fit" not in props
+
+
+@pytest.mark.asyncio
+async def test_market_fit_unparseable_num_rooms():
+    """num_rooms='no sabe' → market_fit not included."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    conv = ConversationResponse(
+        conversation_id="conv-1",
+        status="done",
+        transcript=[
+            ConversationTranscriptEntry(role="agent", message="Hola"),
+        ],
+        analysis=ConversationAnalysis(
+            data_collection_results={
+                "hotel_name": {"value": "Hotel Test"},
+                "num_rooms": {"value": "no sabe"},
+            }
+        ),
+    )
+    _setup_successful_call(hubspot, elevenlabs, company, conversation=conv)
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert "market_fit" not in props
+
+
+# --- state lookup integration tests ---
+
+@pytest.mark.asyncio
+async def test_state_lookup_via_google_places():
+    """State empty + google_places available → state written to HubSpot."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+    google_places = AsyncMock(spec=GooglePlacesService)
+
+    company = _make_company()
+    _setup_successful_call(hubspot, elevenlabs, company)
+    google_places.text_search.return_value = _make_google_place_with_state("Valparaíso")
+
+    service = ProspeccionService(hubspot, elevenlabs, google_places=google_places)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert props["state"] == "Valparaíso"
+
+
+@pytest.mark.asyncio
+async def test_state_lookup_uses_id_hotel():
+    """Company has id_hotel → uses get_place_details, not text_search."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+    google_places = AsyncMock(spec=GooglePlacesService)
+
+    company = HubSpotCompany(
+        id="C1",
+        properties=HubSpotCompanyProperties(
+            name="Hotel Test",
+            phone="+56 1 1111",
+            agente="llamada_prospeccion",
+            id_hotel="ChIJ12345",
+        ),
+    )
+    _setup_successful_call(hubspot, elevenlabs, company)
+    google_places.get_place_details.return_value = _make_google_place_with_state("Biobío")
+
+    service = ProspeccionService(hubspot, elevenlabs, google_places=google_places)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    google_places.get_place_details.assert_called_once_with("ChIJ12345")
+    google_places.text_search.assert_not_called()
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert props["state"] == "Biobío"
+
+
+@pytest.mark.asyncio
+async def test_state_skipped_when_already_set():
+    """Company already has state → Google Places not called."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+    google_places = AsyncMock(spec=GooglePlacesService)
+
+    company = HubSpotCompany(
+        id="C1",
+        properties=HubSpotCompanyProperties(
+            name="Hotel Test",
+            phone="+56 1 1111",
+            agente="llamada_prospeccion",
+            state="Existing State",
+        ),
+    )
+    _setup_successful_call(hubspot, elevenlabs, company)
+
+    service = ProspeccionService(hubspot, elevenlabs, google_places=google_places)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    google_places.text_search.assert_not_called()
+    google_places.get_place_details.assert_not_called()
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert "state" not in props
+
+
+@pytest.mark.asyncio
+async def test_state_lookup_failure_doesnt_block():
+    """Google Places fails → status still completed, market_fit still written."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+    google_places = AsyncMock(spec=GooglePlacesService)
+
+    company = _make_company()
+    _setup_successful_call(hubspot, elevenlabs, company)
+    google_places.text_search.side_effect = Exception("Google Places down")
+
+    service = ProspeccionService(hubspot, elevenlabs, google_places=google_places)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert props["market_fit"] == "Elefante"
+    assert "state" not in props
+
+
+@pytest.mark.asyncio
+async def test_no_google_places_skips_state():
+    """Without google_places service → state not looked up (backward compat)."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    _setup_successful_call(hubspot, elevenlabs, company)
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    update_args = hubspot.update_company.call_args
+    props = update_args[0][1]
+    assert "state" not in props
