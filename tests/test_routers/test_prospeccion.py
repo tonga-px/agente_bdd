@@ -63,9 +63,9 @@ def _mock_successful_call():
                     {"role": "user", "message": "Buenos dias"},
                 ],
                 "analysis": {
-                    "extracted_data": {
-                        "hotel_name": "Hotel Test",
-                        "num_rooms": "50",
+                    "data_collection_results": {
+                        "hotel_name": {"value": "Hotel Test"},
+                        "num_rooms": {"value": "50"},
                     }
                 },
             },

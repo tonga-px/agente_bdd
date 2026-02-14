@@ -293,14 +293,17 @@ class ProspeccionService:
     async def _fetch_with_analysis(
         self, conversation_id: str, retries: int = 6, delay: float = 5.0
     ) -> ConversationResponse:
-        """Fetch conversation, retrying until analysis.extracted_data is populated."""
+        """Fetch conversation, retrying until analysis data is populated."""
         for attempt in range(retries):
             if attempt > 0:
                 await asyncio.sleep(delay)
             conversation = await self._elevenlabs.get_conversation(
                 conversation_id
             )
-            if conversation.analysis and conversation.analysis.extracted_data:
+            if conversation.analysis and (
+                conversation.analysis.data_collection_results
+                or conversation.analysis.extracted_data
+            ):
                 logger.info(
                     "Conversation %s analysis ready after %d attempts",
                     conversation_id,
@@ -351,9 +354,14 @@ class ProspeccionService:
     def _extract_data(
         self, conversation: ConversationResponse
     ) -> ExtractedCallData:
-        raw = {}
+        raw: dict = {}
         if conversation.analysis:
-            raw = conversation.analysis.extracted_data
+            # data_collection_results: {"key": {"value": "...", ...}}
+            dcr = conversation.analysis.data_collection_results
+            if dcr:
+                raw = {k: v.get("value") if isinstance(v, dict) else v for k, v in dcr.items()}
+            elif conversation.analysis.extracted_data:
+                raw = conversation.analysis.extracted_data
 
         def _get(key: str) -> str | None:
             val = raw.get(key)

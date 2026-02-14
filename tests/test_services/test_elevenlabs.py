@@ -93,9 +93,9 @@ async def test_get_conversation_success():
                     {"role": "user", "message": "Buenos dias"},
                 ],
                 "analysis": {
-                    "extracted_data": {
-                        "hotel_name": "Hotel Test",
-                        "num_rooms": "50",
+                    "data_collection_results": {
+                        "hotel_name": {"value": "Hotel Test"},
+                        "num_rooms": {"value": "50"},
                     }
                 },
             },
@@ -110,7 +110,7 @@ async def test_get_conversation_success():
     assert resp.status == "done"
     assert len(resp.transcript) == 2
     assert resp.transcript[0].role == "agent"
-    assert resp.analysis.extracted_data["hotel_name"] == "Hotel Test"
+    assert resp.analysis.data_collection_results["hotel_name"]["value"] == "Hotel Test"
 
 
 @respx.mock

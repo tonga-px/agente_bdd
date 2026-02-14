@@ -71,13 +71,13 @@ def _done_conversation():
             ConversationTranscriptEntry(role="user", message="Buenos dias"),
         ],
         analysis=ConversationAnalysis(
-            extracted_data={
-                "hotel_name": "Hotel Test",
-                "num_rooms": "80",
-                "decision_maker_name": "Juan Perez",
-                "decision_maker_phone": "+56 9 9999",
-                "decision_maker_email": "juan@test.cl",
-                "date_and_time": "Martes 15 a las 10:00",
+            data_collection_results={
+                "hotel_name": {"value": "Hotel Test"},
+                "num_rooms": {"value": "80"},
+                "decision_maker_name": {"value": "Juan Perez"},
+                "decision_maker_phone": {"value": "+56 9 9999"},
+                "decision_maker_email": {"value": "juan@test.cl"},
+                "date_and_time": {"value": "Martes 15 a las 10:00"},
             }
         ),
     )

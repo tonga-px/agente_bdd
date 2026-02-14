@@ -15,6 +15,7 @@ class ConversationTranscriptEntry(BaseModel):
 
 class ConversationAnalysis(BaseModel):
     extracted_data: dict = {}
+    data_collection_results: dict = {}
 
 
 class ConversationResponse(BaseModel):
