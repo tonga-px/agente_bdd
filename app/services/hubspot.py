@@ -267,7 +267,7 @@ class HubSpotService:
                     "types": [
                         {
                             "associationCategory": "HUBSPOT_DEFINED",
-                            "associationTypeId": 220,
+                            "associationTypeId": 182,
                         }
                     ],
                 }
