@@ -139,3 +139,47 @@ async def test_get_conversation_error():
             await service.get_conversation("conv-123")
 
     assert exc_info.value.status_code == 404
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_conversation_audio_success():
+    audio_bytes = b"\xff\xfb\x90\x00" * 100  # fake mp3 data
+    respx.get(f"{CONVERSATIONS_URL}/conv-123/audio").mock(
+        return_value=Response(200, content=audio_bytes)
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = ElevenLabsService(client, "key", "agent-1", "phone-1")
+        result = await service.get_conversation_audio("conv-123")
+
+    assert result == audio_bytes
+    assert isinstance(result, bytes)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_conversation_audio_rate_limit():
+    respx.get(f"{CONVERSATIONS_URL}/conv-123/audio").mock(
+        return_value=Response(429, text="Rate limited")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = ElevenLabsService(client, "key", "agent-1", "phone-1")
+        with pytest.raises(RateLimitError):
+            await service.get_conversation_audio("conv-123")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_conversation_audio_error():
+    respx.get(f"{CONVERSATIONS_URL}/conv-123/audio").mock(
+        return_value=Response(404, text="Not found")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = ElevenLabsService(client, "key", "agent-1", "phone-1")
+        with pytest.raises(ElevenLabsError) as exc_info:
+            await service.get_conversation_audio("conv-123")
+
+    assert exc_info.value.status_code == 404

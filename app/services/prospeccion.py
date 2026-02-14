@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from datetime import datetime, timezone
 
 from app.mappers.call_note_builder import build_prospeccion_note
 from app.schemas.elevenlabs import ConversationResponse
@@ -151,6 +152,15 @@ class ProspeccionService:
             logger.exception(
                 "Failed to create note for company %s, prospeccion still succeeded",
                 company.id,
+            )
+
+        # Register call recording in HubSpot (best-effort)
+        successful_attempt = next(
+            (a for a in call_attempts if a.status == "connected"), None
+        )
+        if successful_attempt and successful_attempt.conversation_id:
+            await self._register_call(
+                company, successful_conversation, successful_attempt, extracted
             )
 
         return ProspeccionResponse(
@@ -345,3 +355,71 @@ class ProspeccionService:
         if extracted.decision_maker_email:
             updates["decision_maker_email"] = extracted.decision_maker_email
         return updates
+
+    async def _register_call(
+        self,
+        company: HubSpotCompany,
+        conversation: ConversationResponse,
+        attempt: CallAttempt,
+        extracted: ExtractedCallData,
+    ) -> None:
+        try:
+            # 1. Download audio from ElevenLabs
+            audio_bytes = await self._elevenlabs.get_conversation_audio(
+                conversation.conversation_id
+            )
+
+            # 2. Upload to HubSpot File Manager
+            filename = f"call_{company.id}_{conversation.conversation_id}.mp3"
+            file_url = await self._hubspot.upload_file(filename, audio_bytes)
+
+            # 3. Build call body from extracted data
+            body_parts: list[str] = []
+            if extracted.hotel_name:
+                body_parts.append(f"Hotel: {extracted.hotel_name}")
+            if extracted.num_rooms:
+                body_parts.append(f"Habitaciones: {extracted.num_rooms}")
+            if extracted.decision_maker_name:
+                body_parts.append(f"Contacto: {extracted.decision_maker_name}")
+            call_body = ". ".join(body_parts) if body_parts else ""
+
+            # 4. Compute duration in ms from conversation metadata
+            duration_ms = self._get_call_duration_ms(conversation)
+
+            # 5. Create Call object in HubSpot
+            properties = {
+                "hs_timestamp": datetime.now(timezone.utc).isoformat(),
+                "hs_call_title": f"Llamada de Prospeccion - {company.properties.name or company.id}",
+                "hs_call_body": call_body,
+                "hs_call_status": "COMPLETED",
+                "hs_call_direction": "OUTBOUND",
+                "hs_call_to_number": attempt.phone_number,
+                "hs_call_recording_url": file_url,
+            }
+            if duration_ms:
+                properties["hs_call_duration"] = str(duration_ms)
+
+            await self._hubspot.create_call(company.id, properties)
+            logger.info(
+                "Registered call for company %s (conversation %s)",
+                company.id,
+                conversation.conversation_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to register call for company %s, prospeccion still succeeded",
+                company.id,
+            )
+
+    @staticmethod
+    def _get_call_duration_ms(conversation: ConversationResponse) -> int | None:
+        if not conversation.metadata:
+            return None
+        start = conversation.metadata.get("start_time_unix_secs")
+        end = conversation.metadata.get("end_time_unix_secs")
+        if start is not None and end is not None:
+            try:
+                return int((float(end) - float(start)) * 1000)
+            except (ValueError, TypeError):
+                return None
+        return None

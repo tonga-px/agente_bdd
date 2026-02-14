@@ -22,3 +22,4 @@ class ConversationResponse(BaseModel):
     status: str = ""  # initiated | in-progress | processing | done | failed
     transcript: list[ConversationTranscriptEntry] = []
     analysis: ConversationAnalysis | None = None
+    metadata: dict | None = None

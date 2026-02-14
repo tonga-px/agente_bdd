@@ -66,3 +66,16 @@ class ElevenLabsService:
             raise ElevenLabsError(resp.text, status_code=resp.status_code)
 
         return ConversationResponse(**resp.json())
+
+    async def get_conversation_audio(
+        self, conversation_id: str
+    ) -> bytes:
+        url = f"{CONVERSATIONS_URL}/{conversation_id}/audio"
+        resp = await self._client.get(url, headers=self._headers)
+
+        if resp.status_code == 429:
+            raise RateLimitError("ElevenLabs")
+        if resp.status_code >= 400:
+            raise ElevenLabsError(resp.text, status_code=resp.status_code)
+
+        return resp.content

@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search"
 COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies"
 
+CALLS_URL = "https://api.hubapi.com/crm/v3/objects/calls"
+FILES_URL = "https://api.hubapi.com/files/v3/files"
 NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
 CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 EMAILS_URL = "https://api.hubapi.com/crm/v3/objects/emails"
@@ -228,3 +230,54 @@ class HubSpotService:
             emails.append(HubSpotEmail(**resp.json()))
         logger.info("Fetched %d emails for company %s", len(emails), company_id)
         return emails
+
+    async def upload_file(
+        self, filename: str, content: bytes, content_type: str = "audio/mpeg"
+    ) -> str:
+        import json as _json
+
+        headers = {"Authorization": self._headers["Authorization"]}
+        resp = await self._client.post(
+            FILES_URL,
+            headers=headers,
+            files={"file": (filename, content, content_type)},
+            data={"options": _json.dumps({"access": "PRIVATE"})},
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        file_url = resp.json().get("url", "")
+        logger.info("Uploaded file %s → %s", filename, file_url)
+        return file_url
+
+    async def create_call(
+        self, company_id: str, properties: dict
+    ) -> None:
+        payload = {
+            "properties": properties,
+            "associations": [
+                {
+                    "to": {"id": company_id},
+                    "types": [
+                        {
+                            "associationCategory": "HUBSPOT_DEFINED",
+                            "associationTypeId": 220,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        resp = await self._client.post(
+            CALLS_URL, json=payload, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Created call for company %s", company_id)

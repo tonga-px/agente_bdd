@@ -11,9 +11,14 @@ HUBSPOT_ASSOC_CONTACTS = "https://api.hubapi.com/crm/v4/objects/companies/C1/ass
 HUBSPOT_ASSOC_NOTES = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/notes"
 HUBSPOT_ASSOC_EMAILS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/emails"
 
+# HubSpot new URLs
+HUBSPOT_FILES_URL = "https://api.hubapi.com/files/v3/files"
+HUBSPOT_CALLS_URL = "https://api.hubapi.com/crm/v3/objects/calls"
+
 # ElevenLabs URLs
 ELEVENLABS_OUTBOUND = "https://api.elevenlabs.io/v1/convai/sip-trunk/outbound-call"
 ELEVENLABS_CONVERSATION = "https://api.elevenlabs.io/v1/convai/conversations/conv-1"
+ELEVENLABS_AUDIO = "https://api.elevenlabs.io/v1/convai/conversations/conv-1/audio"
 
 
 def _mock_company():
@@ -66,6 +71,15 @@ def _mock_successful_call():
             },
         )
     )
+    respx.get(ELEVENLABS_AUDIO).mock(
+        return_value=Response(200, content=b"fake-audio-bytes")
+    )
+    respx.post(HUBSPOT_FILES_URL).mock(
+        return_value=Response(200, json={"id": "file-1", "url": "https://files.hubspot.com/call.mp3"})
+    )
+    respx.post(HUBSPOT_CALLS_URL).mock(
+        return_value=Response(200, json={"id": "call-1"})
+    )
 
 
 async def submit_prospeccion_and_wait(client: AsyncClient, json=None, timeout: float = 5.0):
@@ -99,7 +113,7 @@ async def test_prospeccion_full_flow(client):
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
     respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
 
-    job = await submit_prospeccion_and_wait(client, json={"company_id": "C1"})
+    job = await submit_prospeccion_and_wait(client, json={"company_id": "C1"}, timeout=10.0)
     assert job["status"] == "completed"
 
     result = job["result"]

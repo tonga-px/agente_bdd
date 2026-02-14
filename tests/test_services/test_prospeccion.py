@@ -355,3 +355,80 @@ async def test_dynamic_variables_built_correctly():
     assert dynamic_vars["hotel_website"] == "https://paraiso.pe"
     assert "Ana Garcia (Director)" in dynamic_vars["known_contacts"]
     assert "Client interested" in dynamic_vars["recent_notes"]
+
+
+@pytest.mark.asyncio
+async def test_register_call_on_success():
+    """After a successful call, audio is downloaded, uploaded, and call created."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+    hubspot.upload_file.return_value = "https://files.hubspot.com/call.mp3"
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=True, conversation_id="conv-1"
+    )
+    done_conv = _done_conversation()
+    elevenlabs.get_conversation.side_effect = [done_conv, done_conv]
+    elevenlabs.get_conversation_audio.return_value = b"fake-audio-data"
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+
+    # Verify audio was downloaded
+    elevenlabs.get_conversation_audio.assert_called_once_with("conv-1")
+
+    # Verify file was uploaded
+    hubspot.upload_file.assert_called_once()
+    upload_args = hubspot.upload_file.call_args
+    assert upload_args[0][0] == "call_C1_conv-1.mp3"
+    assert upload_args[0][1] == b"fake-audio-data"
+
+    # Verify call was created
+    hubspot.create_call.assert_called_once()
+    call_args = hubspot.create_call.call_args
+    assert call_args[0][0] == "C1"
+    props = call_args[0][1]
+    assert props["hs_call_status"] == "COMPLETED"
+    assert props["hs_call_direction"] == "OUTBOUND"
+    assert props["hs_call_recording_url"] == "https://files.hubspot.com/call.mp3"
+    assert "Hotel Test" in props["hs_call_title"]
+    assert props["hs_call_to_number"] == "+56 1 1111"
+
+
+@pytest.mark.asyncio
+async def test_register_call_failure_doesnt_block():
+    """If audio download fails, prospeccion still completes."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=True, conversation_id="conv-1"
+    )
+    done_conv = _done_conversation()
+    elevenlabs.get_conversation.side_effect = [done_conv, done_conv]
+    elevenlabs.get_conversation_audio.side_effect = Exception("Audio download failed")
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    hubspot.upload_file.assert_not_called()
+    hubspot.create_call.assert_not_called()
