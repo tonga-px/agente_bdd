@@ -25,38 +25,45 @@ def build_prospeccion_note(
         f"<p><em>Fecha: {now}</em></p>",
     ]
 
-    # Call attempts section
+    # Call result summary
+    connected = any(a.status == "connected" for a in call_attempts)
+    if connected:
+        parts.append("<p>\u2705 <strong>Llamada conectada</strong></p>")
+    elif call_attempts:
+        parts.append("<p>\u274c <strong>No se pudo conectar</strong></p>")
+
+    # Extracted data table
+    fields = [
+        ("Hotel", extracted.hotel_name if extracted else None),
+        ("Habitaciones", extracted.num_rooms if extracted else None),
+        ("Decisor", extracted.decision_maker_name if extracted else None),
+        ("Telefono decisor", extracted.decision_maker_phone if extracted else None),
+        ("Email decisor", extracted.decision_maker_email if extracted else None),
+    ]
+    table_rows: list[str] = []
+    for label, value in fields:
+        display = escape(value) if value else "<em>No proporcionado</em>"
+        table_rows.append(
+            f"<tr><td><strong>{label}</strong></td><td>{display}</td></tr>"
+        )
+    parts.append(
+        "<h3>Datos clave</h3>"
+        '<table border="1" cellpadding="6" cellspacing="0">'
+        f"{''.join(table_rows)}</table>"
+    )
+
+    # Call attempts detail (collapsed)
     if call_attempts:
         rows: list[str] = []
         for attempt in call_attempts:
             emoji = _STATUS_EMOJI.get(attempt.status, "\u2753")
-            source = escape(attempt.source)
             phone = escape(attempt.phone_number)
-            row = f"<li>{emoji} {phone} ({source}) - {escape(attempt.status)}"
+            source = escape(attempt.source)
+            row = f"<li>{emoji} {phone} ({source})"
             if attempt.error:
-                row += f" <em>({escape(attempt.error)})</em>"
+                row += f" - <em>{escape(attempt.error)}</em>"
             row += "</li>"
             rows.append(row)
         parts.append(f"<h3>Intentos de llamada</h3><ul>{''.join(rows)}</ul>")
-
-    # Extracted data section
-    if extracted:
-        rows = []
-        if extracted.hotel_name:
-            rows.append(f"<li><strong>Hotel:</strong> {escape(extracted.hotel_name)}</li>")
-        if extracted.num_rooms:
-            rows.append(f"<li><strong>Habitaciones:</strong> {escape(extracted.num_rooms)}</li>")
-        if extracted.decision_maker_name:
-            rows.append(f"<li><strong>Decisor:</strong> {escape(extracted.decision_maker_name)}</li>")
-        if extracted.decision_maker_phone:
-            rows.append(f"<li><strong>Telefono decisor:</strong> {escape(extracted.decision_maker_phone)}</li>")
-        if extracted.decision_maker_email:
-            rows.append(f"<li><strong>Email decisor:</strong> {escape(extracted.decision_maker_email)}</li>")
-        if rows:
-            parts.append(f"<h3>Datos extraidos</h3><ul>{''.join(rows)}</ul>")
-
-    # Transcript section
-    if transcript:
-        parts.append(f"<h3>Transcripcion</h3><pre>{escape(transcript)}</pre>")
 
     return "".join(parts)

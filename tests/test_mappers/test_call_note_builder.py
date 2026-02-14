@@ -25,24 +25,19 @@ def test_full_note():
 
     assert "Llamada de Prospeccion - Hotel Paraiso" in html
     assert "Fecha:" in html
-    # Attempts section
-    assert "Intentos de llamada" in html
-    assert "+56 1 1111" in html
-    assert "company" in html
-    assert "No answer" in html
-    assert "+56 2 2222" in html
-    assert "connected" in html
-    # Extracted data section
-    assert "Datos extraidos" in html
+    assert "Llamada conectada" in html
+    # Data table
+    assert "Datos clave" in html
     assert "Hotel Paraiso" in html
     assert "120" in html
     assert "Juan Perez" in html
     assert "+56 9 8888" in html
     assert "juan@paraiso.cl" in html
-    # Transcript section
-    assert "Transcripcion" in html
-    assert "Agente: Hola" in html
-    assert "Hotel: Buenos dias" in html
+    # Attempts section
+    assert "Intentos de llamada" in html
+    assert "+56 1 1111" in html
+    assert "No answer" in html
+    assert "+56 2 2222" in html
 
 
 def test_note_no_extracted_data():
@@ -52,18 +47,17 @@ def test_note_no_extracted_data():
     html = build_prospeccion_note("Test Hotel", attempts, None, "Agente: Hola")
 
     assert "Llamada de Prospeccion - Test Hotel" in html
-    assert "Datos extraidos" not in html
-    assert "Transcripcion" in html
+    assert "Datos clave" in html
+    assert "No proporcionado" in html
 
 
-def test_note_no_transcript():
-    attempts = []
+def test_note_no_attempts():
     extracted = ExtractedCallData(hotel_name="Test")
-    html = build_prospeccion_note("Test Hotel", attempts, extracted, None)
+    html = build_prospeccion_note("Test Hotel", [], extracted, None)
 
     assert "Intentos de llamada" not in html
-    assert "Datos extraidos" in html
-    assert "Transcripcion" not in html
+    assert "Datos clave" in html
+    assert "Test" in html
 
 
 def test_note_html_escaping():
@@ -79,14 +73,26 @@ def test_note_html_escaping():
 
 
 def test_note_empty_extracted_fields():
-    """ExtractedCallData with all None fields should not produce a section."""
+    """ExtractedCallData with all None fields shows 'No proporcionado'."""
     extracted = ExtractedCallData()
     html = build_prospeccion_note("Hotel", [], extracted, None)
 
-    assert "Datos extraidos" not in html
+    assert "Datos clave" in html
+    assert html.count("No proporcionado") == 5
 
 
 def test_note_default_company_name():
     """None company name defaults to 'Empresa'."""
     html = build_prospeccion_note(None, [], None, None)
     assert "Empresa" in html
+
+
+def test_note_failed_call():
+    """Failed call shows 'No se pudo conectar'."""
+    attempts = [
+        CallAttempt(phone_number="+1", source="company", status="failed", error="Timeout"),
+    ]
+    html = build_prospeccion_note("Hotel", attempts, None, None)
+
+    assert "No se pudo conectar" in html
+    assert "Llamada conectada" not in html
