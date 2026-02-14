@@ -34,6 +34,7 @@ class ExtractedCallData(BaseModel):
     decision_maker_name: str | None = None
     decision_maker_phone: str | None = None
     decision_maker_email: str | None = None
+    date_and_time: str | None = None
 
 
 class CallAttempt(BaseModel):

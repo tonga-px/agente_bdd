@@ -333,6 +333,7 @@ class ProspeccionService:
             decision_maker_name=_get("decision_maker_name"),
             decision_maker_phone=_get("decision_maker_phone"),
             decision_maker_email=_get("decision_maker_email"),
+            date_and_time=_get("date_and_time"),
         )
 
     def _format_transcript(
@@ -381,6 +382,8 @@ class ProspeccionService:
                 body_parts.append(f"Habitaciones: {extracted.num_rooms}")
             if extracted.decision_maker_name:
                 body_parts.append(f"Contacto: {extracted.decision_maker_name}")
+            if extracted.date_and_time:
+                body_parts.append(f"Disponibilidad demo: {extracted.date_and_time}")
             call_body = ". ".join(body_parts) if body_parts else ""
 
             # 4. Compute duration in ms from conversation metadata

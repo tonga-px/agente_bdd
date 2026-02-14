@@ -18,6 +18,7 @@ def test_full_note():
         decision_maker_name="Juan Perez",
         decision_maker_phone="+56 9 8888",
         decision_maker_email="juan@paraiso.cl",
+        date_and_time="Martes 15 a las 10:00",
     )
     transcript = "Agente: Hola\nHotel: Buenos dias"
 
@@ -33,6 +34,8 @@ def test_full_note():
     assert "Juan Perez" in html
     assert "+56 9 8888" in html
     assert "juan@paraiso.cl" in html
+    assert "Disponibilidad demo" in html
+    assert "Martes 15 a las 10:00" in html
     # Attempts section
     assert "Intentos de llamada" in html
     assert "+56 1 1111" in html
@@ -78,7 +81,7 @@ def test_note_empty_extracted_fields():
     html = build_prospeccion_note("Hotel", [], extracted, None)
 
     assert "Datos clave" in html
-    assert html.count("No proporcionado") == 5
+    assert html.count("No proporcionado") == 6
 
 
 def test_note_default_company_name():

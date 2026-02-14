@@ -71,6 +71,7 @@ def _done_conversation():
                 "decision_maker_name": "Juan Perez",
                 "decision_maker_phone": "+56 9 9999",
                 "decision_maker_email": "juan@test.cl",
+                "date_and_time": "Martes 15 a las 10:00",
             }
         ),
     )

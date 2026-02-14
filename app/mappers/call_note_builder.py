@@ -39,6 +39,7 @@ def build_prospeccion_note(
         ("Decisor", extracted.decision_maker_name if extracted else None),
         ("Telefono decisor", extracted.decision_maker_phone if extracted else None),
         ("Email decisor", extracted.decision_maker_email if extracted else None),
+        ("Disponibilidad demo", extracted.date_and_time if extracted else None),
     ]
     table_rows: list[str] = []
     for label, value in fields:
