@@ -16,6 +16,14 @@ POLL_TIMEOUT = 300  # seconds
 TERMINAL_STATUSES = {"done", "failed"}
 
 
+def _fix_encoding(text: str) -> str:
+    """Fix double-encoded UTF-8 (UTF-8 bytes decoded as Latin-1)."""
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
 def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
@@ -305,12 +313,16 @@ class ProspeccionService:
         if conversation.analysis:
             raw = conversation.analysis.extracted_data
 
+        def _get(key: str) -> str | None:
+            val = raw.get(key)
+            return _fix_encoding(val) if val else val
+
         return ExtractedCallData(
-            hotel_name=raw.get("hotel_name"),
-            num_rooms=raw.get("num_rooms"),
-            decision_maker_name=raw.get("decision_maker_name"),
-            decision_maker_phone=raw.get("decision_maker_phone"),
-            decision_maker_email=raw.get("decision_maker_email"),
+            hotel_name=_get("hotel_name"),
+            num_rooms=_get("num_rooms"),
+            decision_maker_name=_get("decision_maker_name"),
+            decision_maker_phone=_get("decision_maker_phone"),
+            decision_maker_email=_get("decision_maker_email"),
         )
 
     def _format_transcript(
@@ -319,7 +331,7 @@ class ProspeccionService:
         lines: list[str] = []
         for entry in conversation.transcript:
             role = "Agente" if entry.role == "agent" else "Hotel"
-            lines.append(f"{role}: {entry.message}")
+            lines.append(f"{role}: {_fix_encoding(entry.message)}")
         return "\n".join(lines)
 
     def _build_hubspot_updates(self, extracted: ExtractedCallData) -> dict[str, str]:
