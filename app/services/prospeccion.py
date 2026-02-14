@@ -345,7 +345,8 @@ class ProspeccionService:
         lines: list[str] = []
         for entry in conversation.transcript:
             role = "Agente" if entry.role == "agent" else "Hotel"
-            lines.append(f"{role}: {_fix_encoding(entry.message)}")
+            msg = _fix_encoding(entry.message) if entry.message else ""
+            lines.append(f"{role}: {msg}")
         return "\n".join(lines)
 
     def _build_hubspot_updates(self, extracted: ExtractedCallData) -> dict[str, str]:

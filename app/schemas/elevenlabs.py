@@ -10,7 +10,7 @@ class OutboundCallResponse(BaseModel):
 
 class ConversationTranscriptEntry(BaseModel):
     role: str  # "agent" | "user"
-    message: str = ""
+    message: str | None = ""
 
 
 class ConversationAnalysis(BaseModel):
