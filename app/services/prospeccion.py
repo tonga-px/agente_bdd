@@ -253,7 +253,7 @@ class ProspeccionService:
             call_resp = await self._elevenlabs.start_outbound_call(
                 phone, dynamic_vars
             )
-            if not call_resp.success or not call_resp.conversation_id:
+            if not call_resp.conversation_id:
                 return CallAttempt(
                     phone_number=phone,
                     source=source,

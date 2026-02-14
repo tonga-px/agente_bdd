@@ -49,8 +49,7 @@ class ElevenLabsService:
 
         data = resp.json()
         logger.info(
-            "Outbound call started: conversation_id=%s",
-            data.get("conversation_id"),
+            "Outbound call response: %s", data,
         )
         return OutboundCallResponse(**data)
 
