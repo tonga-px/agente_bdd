@@ -20,11 +20,38 @@ TERMINAL_STATUSES = {"done", "failed"}
 
 
 def _fix_encoding(text: str) -> str:
-    """Fix double-encoded UTF-8 (UTF-8 bytes decoded as Latin-1)."""
+    """Fix double-encoded UTF-8 (UTF-8 bytes decoded as Latin-1).
+
+    Handles mixed content where some characters are > U+00FF (e.g. smart
+    quotes, em dashes) and can't be Latin-1 encoded.  Those are passed
+    through as-is while the Latin-1-encodable segments are decoded as UTF-8.
+    """
     try:
         return text.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
-        return text
+        pass
+
+    # Fallback: fix Latin-1 segments, pass through non-Latin-1 chars
+    result: list[str] = []
+    buf = bytearray()
+    for ch in text:
+        if ord(ch) <= 0xFF:
+            buf.append(ord(ch))
+        else:
+            if buf:
+                try:
+                    result.append(buf.decode("utf-8"))
+                except UnicodeDecodeError:
+                    result.append(buf.decode("latin-1"))
+                buf = bytearray()
+            result.append(ch)
+    if buf:
+        try:
+            result.append(buf.decode("utf-8"))
+        except UnicodeDecodeError:
+            result.append(buf.decode("latin-1"))
+
+    return "".join(result)
 
 
 def _strip_html(text: str) -> str:
