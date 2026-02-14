@@ -35,6 +35,21 @@ def _truncate(text: str, max_len: int = 200) -> str:
     return text[:max_len] + "..."
 
 
+def _split_name(full_name: str) -> tuple[str, str]:
+    """Split a full name into (firstname, lastname).
+
+    "Juan García" → ("Juan", "García")
+    "Juan" → ("Juan", "")
+    "María de los Angeles López" → ("María", "de los Angeles López")
+    """
+    parts = full_name.strip().split(None, 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    if len(parts) == 1:
+        return parts[0], ""
+    return "", ""
+
+
 class ProspeccionService:
     def __init__(self, hubspot: HubSpotService, elevenlabs: ElevenLabsService):
         self._hubspot = hubspot
@@ -152,6 +167,11 @@ class ProspeccionService:
                 "Failed to create note for company %s, prospeccion still succeeded",
                 company.id,
             )
+
+        # Create or update decision maker contact (best-effort)
+        await self._upsert_decision_maker_contact(
+            company.id, extracted, contacts
+        )
 
         # Register call recording in HubSpot (best-effort)
         successful_attempt = next(
@@ -386,6 +406,61 @@ class ProspeccionService:
 
     def _build_hubspot_updates(self, extracted: ExtractedCallData) -> dict[str, str]:
         return {}
+
+    async def _upsert_decision_maker_contact(
+        self,
+        company_id: str,
+        extracted: ExtractedCallData,
+        contacts: list[HubSpotContact],
+    ) -> None:
+        """Create or update a contact for the decision maker (best-effort)."""
+        try:
+            has_data = extracted.decision_maker_name or extracted.decision_maker_phone or extracted.decision_maker_email
+            if not has_data:
+                return
+
+            # Build properties from extracted data
+            props: dict[str, str] = {}
+            if extracted.decision_maker_name:
+                first, last = _split_name(extracted.decision_maker_name)
+                if first:
+                    props["firstname"] = first
+                if last:
+                    props["lastname"] = last
+            if extracted.decision_maker_phone:
+                props["phone"] = extracted.decision_maker_phone
+            if extracted.decision_maker_email:
+                props["email"] = extracted.decision_maker_email
+
+            # Check if a contact with that email already exists in the company
+            existing: HubSpotContact | None = None
+            if extracted.decision_maker_email:
+                email_lower = extracted.decision_maker_email.lower()
+                for c in contacts:
+                    if c.properties.email and c.properties.email.lower() == email_lower:
+                        existing = c
+                        break
+
+            if existing:
+                # Update only empty fields
+                update_props: dict[str, str] = {}
+                for key, value in props.items():
+                    existing_val = getattr(existing.properties, key, None)
+                    if not existing_val:
+                        update_props[key] = value
+                if update_props:
+                    await self._hubspot.update_contact(existing.id, update_props)
+                    logger.info("Updated existing contact %s for company %s", existing.id, company_id)
+                else:
+                    logger.info("Contact %s already has all fields, skipping update", existing.id)
+            else:
+                contact_id = await self._hubspot.create_contact(company_id, props)
+                logger.info("Created new contact %s for company %s", contact_id, company_id)
+        except Exception:
+            logger.exception(
+                "Failed to upsert decision maker contact for company %s, prospeccion still succeeded",
+                company_id,
+            )
 
     async def _register_call(
         self,

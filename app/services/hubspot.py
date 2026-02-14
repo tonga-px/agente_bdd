@@ -209,6 +209,52 @@ class HubSpotService:
         logger.info("Fetched %d emails for company %s", len(emails), company_id)
         return emails
 
+    async def create_contact(
+        self, company_id: str, properties: dict[str, str]
+    ) -> str:
+        payload = {
+            "properties": properties,
+            "associations": [
+                {
+                    "to": {"id": company_id},
+                    "types": [
+                        {
+                            "associationCategory": "HUBSPOT_DEFINED",
+                            "associationTypeId": 1,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        resp = await self._client.post(
+            CONTACTS_URL, json=payload, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        contact_id = resp.json().get("id", "")
+        logger.info("Created contact %s for company %s", contact_id, company_id)
+        return contact_id
+
+    async def update_contact(
+        self, contact_id: str, properties: dict[str, str]
+    ) -> None:
+        url = f"{CONTACTS_URL}/{contact_id}"
+        resp = await self._client.patch(
+            url, json={"properties": properties}, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Updated contact %s", contact_id)
+
     async def upload_file(
         self, filename: str, content: bytes, content_type: str = "audio/mpeg"
     ) -> str:

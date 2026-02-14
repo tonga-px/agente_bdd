@@ -19,7 +19,7 @@ from app.schemas.hubspot import (
 )
 from app.services.elevenlabs import ElevenLabsService
 from app.services.hubspot import HubSpotService
-from app.services.prospeccion import ProspeccionService
+from app.services.prospeccion import ProspeccionService, _split_name
 
 
 def _make_company(
@@ -434,3 +434,176 @@ async def test_register_call_failure_doesnt_block():
     assert result.status == "completed"
     hubspot.upload_file.assert_not_called()
     hubspot.create_call.assert_not_called()
+
+
+# --- _split_name tests ---
+
+def test_split_name_two_parts():
+    assert _split_name("Juan García") == ("Juan", "García")
+
+
+def test_split_name_single():
+    assert _split_name("Juan") == ("Juan", "")
+
+
+def test_split_name_multiple_parts():
+    assert _split_name("María de los Angeles López") == ("María", "de los Angeles López")
+
+
+def test_split_name_empty():
+    assert _split_name("") == ("", "")
+
+
+def test_split_name_whitespace():
+    assert _split_name("  Juan  García  ") == ("Juan", "García")
+
+
+# --- _upsert_decision_maker_contact tests ---
+
+@pytest.mark.asyncio
+async def test_contact_created_when_decision_maker_data():
+    """A new contact is created when decision maker data is extracted."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+    hubspot.create_contact.return_value = "new-contact-id"
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=True, conversation_id="conv-1"
+    )
+    done_conv = _done_conversation()
+    elevenlabs.get_conversation.side_effect = [done_conv, done_conv]
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    hubspot.create_contact.assert_called_once()
+    call_args = hubspot.create_contact.call_args
+    assert call_args[0][0] == "C1"
+    props = call_args[0][1]
+    assert props["firstname"] == "Juan"
+    assert props["lastname"] == "Perez"
+    assert props["phone"] == "+56 9 9999"
+    assert props["email"] == "juan@test.cl"
+
+
+@pytest.mark.asyncio
+async def test_contact_updated_when_email_matches():
+    """Existing contact is updated (empty fields only) when email matches."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    # Existing contact has same email but no phone
+    existing_contact = HubSpotContact(
+        id="existing-100",
+        properties=HubSpotContactProperties(
+            firstname="Juan",
+            lastname="Perez",
+            email="juan@test.cl",
+            phone=None,
+        ),
+    )
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = [existing_contact]
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=True, conversation_id="conv-1"
+    )
+    done_conv = _done_conversation()
+    elevenlabs.get_conversation.side_effect = [done_conv, done_conv]
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    hubspot.create_contact.assert_not_called()
+    hubspot.update_contact.assert_called_once()
+    call_args = hubspot.update_contact.call_args
+    assert call_args[0][0] == "existing-100"
+    props = call_args[0][1]
+    # Only phone should be updated (firstname, lastname, email already exist)
+    assert props["phone"] == "+56 9 9999"
+    assert "firstname" not in props
+    assert "lastname" not in props
+    assert "email" not in props
+
+
+@pytest.mark.asyncio
+async def test_no_contact_upsert_when_no_decision_maker_data():
+    """No contact created when no decision maker data is extracted."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+
+    # Conversation with no decision maker data
+    conv_no_dm = ConversationResponse(
+        conversation_id="conv-1",
+        status="done",
+        transcript=[
+            ConversationTranscriptEntry(role="agent", message="Hola"),
+        ],
+        analysis=ConversationAnalysis(
+            data_collection_results={
+                "hotel_name": {"value": "Hotel Test"},
+            }
+        ),
+    )
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=True, conversation_id="conv-1"
+    )
+    elevenlabs.get_conversation.side_effect = [conv_no_dm, conv_no_dm]
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    hubspot.create_contact.assert_not_called()
+    hubspot.update_contact.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_contact_upsert_failure_doesnt_block():
+    """If contact upsert fails, prospeccion still completes."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company()
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+    hubspot.create_contact.side_effect = Exception("Contact creation failed")
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=True, conversation_id="conv-1"
+    )
+    done_conv = _done_conversation()
+    elevenlabs.get_conversation.side_effect = [done_conv, done_conv]
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
