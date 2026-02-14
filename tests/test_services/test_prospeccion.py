@@ -30,8 +30,6 @@ def _make_company(
     country="Chile",
     website="https://hoteltest.cl",
     address=None,
-    num_rooms=None,
-    decision_maker_name=None,
 ):
     return HubSpotCompany(
         id=company_id,
@@ -43,8 +41,6 @@ def _make_company(
             website=website,
             agente="llamada_prospeccion",
             address=address,
-            num_rooms=num_rooms,
-            decision_maker_name=decision_maker_name,
         ),
     )
 
@@ -116,13 +112,11 @@ async def test_full_flow():
     assert len(result.call_attempts) == 1
     assert result.call_attempts[0].status == "connected"
 
-    # Verify HubSpot was updated
+    # Verify HubSpot was updated (only agente cleared, extracted data goes to note)
     hubspot.update_company.assert_called_once()
     update_args = hubspot.update_company.call_args
     props = update_args[0][1]
     assert props["agente"] == ""
-    assert props["num_rooms"] == "80"
-    assert props["decision_maker_name"] == "Juan Perez"
 
     # Verify note was created
     hubspot.create_note.assert_called_once()
@@ -334,7 +328,7 @@ async def test_dynamic_variables_built_correctly():
     hubspot = AsyncMock(spec=HubSpotService)
     elevenlabs = AsyncMock(spec=ElevenLabsService)
 
-    company = _make_company(name="Hotel Paraiso", city="Lima", country="Peru", website="https://paraiso.pe", address="Av. Larco 123", num_rooms="95", decision_maker_name="Carlos Lopez")
+    company = _make_company(name="Hotel Paraiso", city="Lima", country="Peru", website="https://paraiso.pe", address="Av. Larco 123")
     contact = _make_contact(firstname="Ana", lastname="Garcia")
     note = HubSpotNote(id="n1", properties={"hs_note_body": "<p>Client interested</p>"})
 
@@ -361,8 +355,6 @@ async def test_dynamic_variables_built_correctly():
     assert dynamic_vars["hotel_country"] == "Peru"
     assert dynamic_vars["hotel_website"] == "https://paraiso.pe"
     assert dynamic_vars["hotel_address"] == "Av. Larco 123"
-    assert dynamic_vars["hotel_num_rooms"] == "95"
-    assert dynamic_vars["hotel_decision_maker"] == "Carlos Lopez"
     assert "Ana Garcia (Director)" in dynamic_vars["known_contacts"]
     assert "Client interested" in dynamic_vars["recent_notes"]
 

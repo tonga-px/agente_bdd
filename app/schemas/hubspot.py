@@ -14,8 +14,6 @@ class HubSpotCompanyProperties(BaseModel):
     agente: str | None = None
     id_hotel: str | None = None
     id_tripadvisor: str | None = None
-    num_rooms: str | None = None
-    decision_maker_name: str | None = None
 
 
 class HubSpotCompany(BaseModel):

@@ -35,8 +35,6 @@ SEARCH_PROPERTIES = [
     "agente",
     "id_hotel",
     "id_tripadvisor",
-    "num_rooms",
-    "decision_maker_name",
 ]
 
 

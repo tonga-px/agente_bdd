@@ -239,8 +239,6 @@ class ProspeccionService:
             "hotel_country": props.country or "",
             "hotel_website": props.website or "",
             "hotel_address": props.address or "",
-            "hotel_num_rooms": props.num_rooms or "",
-            "hotel_decision_maker": props.decision_maker_name or "",
             "known_contacts": ", ".join(contact_summaries) if contact_summaries else "Ninguno",
             "recent_notes": " | ".join(note_summaries) if note_summaries else "Ninguna",
             "recent_emails": ", ".join(email_subjects) if email_subjects else "Ninguno",
@@ -387,16 +385,7 @@ class ProspeccionService:
         return "\n".join(lines)
 
     def _build_hubspot_updates(self, extracted: ExtractedCallData) -> dict[str, str]:
-        updates: dict[str, str] = {}
-        if extracted.num_rooms:
-            updates["num_rooms"] = extracted.num_rooms
-        if extracted.decision_maker_name:
-            updates["decision_maker_name"] = extracted.decision_maker_name
-        if extracted.decision_maker_phone:
-            updates["decision_maker_phone"] = extracted.decision_maker_phone
-        if extracted.decision_maker_email:
-            updates["decision_maker_email"] = extracted.decision_maker_email
-        return updates
+        return {}
 
     async def _register_call(
         self,
