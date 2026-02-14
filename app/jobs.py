@@ -6,7 +6,9 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
-from app.schemas.responses import EnrichmentResponse
+from app.schemas.responses import EnrichmentResponse, ProspeccionResponse
+
+JobResult = EnrichmentResponse | ProspeccionResponse
 
 
 class JobStatus(StrEnum):
@@ -22,7 +24,7 @@ class Job(BaseModel):
     created_at: datetime
     finished_at: datetime | None = None
     company_id: str | None = None
-    result: EnrichmentResponse | None = None
+    result: JobResult | None = None
     error: str | None = None
 
 
@@ -60,7 +62,7 @@ class JobStore:
         if job := self._jobs.get(job_id):
             job.status = JobStatus.running
 
-    def mark_completed(self, job_id: str, result: EnrichmentResponse) -> None:
+    def mark_completed(self, job_id: str, result: JobResult) -> None:
         if job := self._jobs.get(job_id):
             job.status = JobStatus.completed
             job.result = result

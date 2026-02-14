@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import httpx
 
 from app.exceptions.custom import HubSpotError, RateLimitError
-from app.schemas.hubspot import HubSpotCompany
+from app.schemas.hubspot import HubSpotCompany, HubSpotContact, HubSpotEmail, HubSpotNote
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,13 @@ SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search"
 COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies"
 
 NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
+CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
+EMAILS_URL = "https://api.hubapi.com/crm/v3/objects/emails"
+ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/companies"
+
+CONTACT_PROPERTIES = [
+    "firstname", "lastname", "email", "phone", "mobilephone", "jobtitle",
+]
 
 SEARCH_PROPERTIES = [
     "name",
@@ -151,3 +158,73 @@ class HubSpotService:
             raise HubSpotError(resp.text, status_code=resp.status_code)
 
         logger.info("Created note for company %s", company_id)
+
+    async def _get_associated_ids(
+        self, company_id: str, to_object_type: str
+    ) -> list[str]:
+        url = f"{ASSOCIATIONS_URL}/{company_id}/associations/{to_object_type}"
+        resp = await self._client.get(url, headers=self._headers)
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        return [r["toObjectId"] for r in resp.json().get("results", [])]
+
+    async def get_associated_contacts(
+        self, company_id: str
+    ) -> list[HubSpotContact]:
+        ids = await self._get_associated_ids(company_id, "contacts")
+        contacts: list[HubSpotContact] = []
+        for obj_id in ids:
+            url = f"{CONTACTS_URL}/{obj_id}"
+            resp = await self._client.get(
+                url,
+                params={"properties": ",".join(CONTACT_PROPERTIES)},
+                headers=self._headers,
+            )
+            if resp.status_code >= 400:
+                logger.warning("Failed to fetch contact %s: %s", obj_id, resp.status_code)
+                continue
+            contacts.append(HubSpotContact(**resp.json()))
+        logger.info("Fetched %d contacts for company %s", len(contacts), company_id)
+        return contacts
+
+    async def get_associated_notes(
+        self, company_id: str, limit: int = 10
+    ) -> list[HubSpotNote]:
+        ids = await self._get_associated_ids(company_id, "notes")
+        notes: list[HubSpotNote] = []
+        for obj_id in ids[:limit]:
+            url = f"{NOTES_URL}/{obj_id}"
+            resp = await self._client.get(
+                url,
+                params={"properties": "hs_note_body,hs_timestamp"},
+                headers=self._headers,
+            )
+            if resp.status_code >= 400:
+                logger.warning("Failed to fetch note %s: %s", obj_id, resp.status_code)
+                continue
+            notes.append(HubSpotNote(**resp.json()))
+        logger.info("Fetched %d notes for company %s", len(notes), company_id)
+        return notes
+
+    async def get_associated_emails(
+        self, company_id: str, limit: int = 10
+    ) -> list[HubSpotEmail]:
+        ids = await self._get_associated_ids(company_id, "emails")
+        emails: list[HubSpotEmail] = []
+        for obj_id in ids[:limit]:
+            url = f"{EMAILS_URL}/{obj_id}"
+            resp = await self._client.get(
+                url,
+                params={"properties": "hs_email_subject,hs_email_direction,hs_timestamp"},
+                headers=self._headers,
+            )
+            if resp.status_code >= 400:
+                logger.warning("Failed to fetch email %s: %s", obj_id, resp.status_code)
+                continue
+            emails.append(HubSpotEmail(**resp.json()))
+        logger.info("Fetched %d emails for company %s", len(emails), company_id)
+        return emails

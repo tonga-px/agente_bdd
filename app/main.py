@@ -6,18 +6,28 @@ import httpx
 from fastapi import FastAPI
 
 from app.config import Settings
-from app.exceptions.custom import GooglePlacesError, HubSpotError, RateLimitError, TripAdvisorError
+from app.exceptions.custom import (
+    ElevenLabsError,
+    GooglePlacesError,
+    HubSpotError,
+    RateLimitError,
+    TripAdvisorError,
+)
 from app.jobs import JobStore
 from app.exceptions.handlers import (
+    elevenlabs_error_handler,
     google_places_error_handler,
     hubspot_error_handler,
     rate_limit_error_handler,
     tripadvisor_error_handler,
 )
 from app.routers.enrichment import router as enrichment_router
+from app.routers.prospeccion import router as prospeccion_router
+from app.services.elevenlabs import ElevenLabsService
 from app.services.enrichment import EnrichmentService
 from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
+from app.services.prospeccion import ProspeccionService
 from app.services.tripadvisor import TripAdvisorService
 
 
@@ -46,6 +56,19 @@ async def lifespan(app: FastAPI):
 
         app.state.enrichment_service = enrichment
         app.state.job_store = JobStore()
+
+        # ElevenLabs + Prospeccion (conditional, like TripAdvisor)
+        if settings.elevenlabs_api_key and settings.elevenlabs_agent_id:
+            elevenlabs = ElevenLabsService(
+                client,
+                settings.elevenlabs_api_key,
+                settings.elevenlabs_agent_id,
+                settings.elevenlabs_phone_number_id,
+            )
+            app.state.prospeccion_service = ProspeccionService(hubspot, elevenlabs)
+        else:
+            app.state.prospeccion_service = None
+
         yield
 
 
@@ -54,6 +77,8 @@ app = FastAPI(title="Agente BDD", lifespan=lifespan)
 app.add_exception_handler(HubSpotError, hubspot_error_handler)
 app.add_exception_handler(GooglePlacesError, google_places_error_handler)
 app.add_exception_handler(TripAdvisorError, tripadvisor_error_handler)
+app.add_exception_handler(ElevenLabsError, elevenlabs_error_handler)
 app.add_exception_handler(RateLimitError, rate_limit_error_handler)
 
 app.include_router(enrichment_router)
+app.include_router(prospeccion_router)

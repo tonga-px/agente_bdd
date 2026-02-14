@@ -19,3 +19,27 @@ class HubSpotCompanyProperties(BaseModel):
 class HubSpotCompany(BaseModel):
     id: str
     properties: HubSpotCompanyProperties
+
+
+class HubSpotContactProperties(BaseModel):
+    firstname: str | None = None
+    lastname: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    mobilephone: str | None = None
+    jobtitle: str | None = None
+
+
+class HubSpotContact(BaseModel):
+    id: str
+    properties: HubSpotContactProperties
+
+
+class HubSpotNote(BaseModel):
+    id: str
+    properties: dict
+
+
+class HubSpotEmail(BaseModel):
+    id: str
+    properties: dict
