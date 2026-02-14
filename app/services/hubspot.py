@@ -245,6 +245,7 @@ class HubSpotService:
                 "options": _json.dumps({"access": "PRIVATE"}),
                 "folderPath": "/calls",
             },
+            timeout=120.0,
         )
 
         if resp.status_code == 429:

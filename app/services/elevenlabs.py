@@ -70,7 +70,7 @@ class ElevenLabsService:
         self, conversation_id: str
     ) -> bytes:
         url = f"{CONVERSATIONS_URL}/{conversation_id}/audio"
-        resp = await self._client.get(url, headers=self._headers)
+        resp = await self._client.get(url, headers=self._headers, timeout=120.0)
 
         if resp.status_code == 429:
             raise RateLimitError("ElevenLabs")
