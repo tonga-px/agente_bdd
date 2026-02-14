@@ -241,7 +241,10 @@ class HubSpotService:
             FILES_URL,
             headers=headers,
             files={"file": (filename, content, content_type)},
-            data={"options": _json.dumps({"access": "PRIVATE"})},
+            data={
+                "options": _json.dumps({"access": "PRIVATE"}),
+                "folderPath": "/calls",
+            },
         )
 
         if resp.status_code == 429:
