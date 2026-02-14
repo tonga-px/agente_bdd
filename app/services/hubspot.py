@@ -60,42 +60,20 @@ class HubSpotService:
                 }
             ],
             "properties": SEARCH_PROPERTIES,
-            "limit": 100,
+            "limit": 1,
         }
 
-        companies: list[HubSpotCompany] = []
-        after: str | None = None
+        resp = await self._client.post(
+            SEARCH_URL, json=payload, headers=self._headers
+        )
 
-        while True:
-            if after:
-                payload["after"] = after
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
 
-            resp = await self._client.post(
-                SEARCH_URL, json=payload, headers=self._headers
-            )
-
-            if resp.status_code == 429:
-                raise RateLimitError("HubSpot")
-            if resp.status_code >= 400:
-                if companies:
-                    logger.warning(
-                        "HubSpot search returned %d on page fetch, "
-                        "returning %d companies collected so far",
-                        resp.status_code,
-                        len(companies),
-                    )
-                    break
-                raise HubSpotError(resp.text, status_code=resp.status_code)
-
-            data = resp.json()
-            for result in data.get("results", []):
-                companies.append(HubSpotCompany(**result))
-
-            paging = data.get("paging", {}).get("next")
-            if paging:
-                after = paging["after"]
-            else:
-                break
+        data = resp.json()
+        companies = [HubSpotCompany(**r) for r in data.get("results", [])]
 
         logger.info("Found %d companies with agente='%s'", len(companies), agente_value)
         return companies
