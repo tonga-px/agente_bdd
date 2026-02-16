@@ -79,6 +79,14 @@ def _split_name(full_name: str) -> tuple[str, str]:
     return "", ""
 
 
+def _normalize_phone(phone: str) -> str:
+    """Ensure phone number starts with '+' for E.164 format."""
+    phone = phone.strip()
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    return phone
+
+
 def _parse_num_rooms(raw: str) -> int | None:
     """Extract the first integer from a num_rooms string."""
     match = re.search(r"\d+", raw)
@@ -259,21 +267,23 @@ class ProspeccionService:
 
         # Company phone first
         if company.properties.phone and company.properties.phone.strip():
-            phone = company.properties.phone.strip()
+            phone = _normalize_phone(company.properties.phone)
             seen.add(phone)
             phones.append((phone, "company"))
 
         # Then contact phones
         for contact in contacts:
             props = contact.properties
-            if props.phone and props.phone.strip() and props.phone.strip() not in seen:
-                phone = props.phone.strip()
-                seen.add(phone)
-                phones.append((phone, f"contact:{contact.id}:phone"))
-            if props.mobilephone and props.mobilephone.strip() and props.mobilephone.strip() not in seen:
-                phone = props.mobilephone.strip()
-                seen.add(phone)
-                phones.append((phone, f"contact:{contact.id}:mobile"))
+            if props.phone and props.phone.strip():
+                phone = _normalize_phone(props.phone)
+                if phone not in seen:
+                    seen.add(phone)
+                    phones.append((phone, f"contact:{contact.id}:phone"))
+            if props.mobilephone and props.mobilephone.strip():
+                phone = _normalize_phone(props.mobilephone)
+                if phone not in seen:
+                    seen.add(phone)
+                    phones.append((phone, f"contact:{contact.id}:mobile"))
 
         return phones
 

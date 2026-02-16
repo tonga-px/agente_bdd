@@ -26,7 +26,7 @@ def merge_fields(
         "country": (current.country, parsed.country),
         "phone": (
             current.phone,
-            place.nationalPhoneNumber or place.internationalPhoneNumber,
+            place.internationalPhoneNumber or place.nationalPhoneNumber,
         ),
         "website": (current.website, place.websiteUri),
     }
