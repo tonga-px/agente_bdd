@@ -155,6 +155,10 @@ class EnrichmentService:
             updates.update(google_updates)
             changes.extend(google_changes)
 
+        if ta_location and ta_location.location_id:
+            if self._overwrite or not (props.id_tripadvisor and props.id_tripadvisor.strip()):
+                updates["id_tripadvisor"] = ta_location.location_id
+
         # Always clear agente
         updates["agente"] = ""
 

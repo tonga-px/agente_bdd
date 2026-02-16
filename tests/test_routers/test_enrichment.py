@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import respx
 from httpx import AsyncClient, Response
@@ -168,6 +169,12 @@ async def test_enrich_full_flow(client):
     assert result["company_id"] == "12345"
     assert result["status"] == "enriched"
     assert len(result["changes"]) > 0
+
+    # Verify id_tripadvisor was sent to HubSpot
+    patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
+    assert len(patch_calls) == 1
+    body = json.loads(patch_calls[0].request.content)
+    assert body["properties"]["id_tripadvisor"] == "999"
 
 
 @respx.mock
@@ -540,6 +547,145 @@ async def test_get_job_nonexistent(client):
     resp = await client.get("/jobs/does_not_exist")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Job not found"
+
+
+@respx.mock
+async def test_enrich_does_not_overwrite_existing_tripadvisor_id(client):
+    """When id_tripadvisor already has a value, it should not be overwritten."""
+    respx.post(HUBSPOT_SEARCH_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "12345",
+                        "properties": {
+                            "name": "Acme Corp",
+                            "domain": None,
+                            "phone": None,
+                            "website": None,
+                            "address": None,
+                            "city": "Santiago",
+                            "state": None,
+                            "zip": None,
+                            "country": "Chile",
+                            "agente": "datos",
+                            "id_tripadvisor": "888",
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock Google Places search
+    respx.post(GOOGLE_PLACES_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "places": [
+                    {
+                        "formattedAddress": "Av. Providencia 123, Santiago, Chile",
+                        "nationalPhoneNumber": "+56 2 1234 5678",
+                        "websiteUri": "https://acme.cl",
+                        "addressComponents": [
+                            {"longText": "Santiago", "shortText": "Santiago", "types": ["locality"]},
+                            {"longText": "Chile", "shortText": "CL", "types": ["country"]},
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock TripAdvisor — uses get_details since id_tripadvisor exists
+    _mock_ta_details(location_id="888")
+
+    # Mock HubSpot update
+    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+
+    # Mock notes
+    _mock_notes()
+
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
+    assert job["result"]["enriched"] == 1
+
+    # Verify id_tripadvisor was NOT included in the update
+    patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
+    assert len(patch_calls) == 1
+    body = json.loads(patch_calls[0].request.content)
+    assert "id_tripadvisor" not in body["properties"]
+
+
+@respx.mock
+async def test_enrich_tripadvisor_failure_no_id_tripadvisor_in_update(client):
+    """When TripAdvisor fails, id_tripadvisor should not appear in HubSpot update."""
+    respx.post(HUBSPOT_SEARCH_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "12345",
+                        "properties": {
+                            "name": "Acme Corp",
+                            "domain": None,
+                            "phone": None,
+                            "website": None,
+                            "address": None,
+                            "city": "Santiago",
+                            "state": None,
+                            "zip": None,
+                            "country": "Chile",
+                            "agente": "datos",
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock Google Places search — succeeds
+    respx.post(GOOGLE_PLACES_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "places": [
+                    {
+                        "formattedAddress": "Av. Providencia 123, Santiago, Chile",
+                        "nationalPhoneNumber": "+56 2 1234 5678",
+                        "websiteUri": "https://acme.cl",
+                        "addressComponents": [
+                            {"longText": "Santiago", "shortText": "Santiago", "types": ["locality"]},
+                            {"longText": "Chile", "shortText": "CL", "types": ["country"]},
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock TripAdvisor — fails
+    respx.get(TA_SEARCH_URL).mock(
+        return_value=Response(500, text="Internal Server Error")
+    )
+
+    # Mock HubSpot update
+    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+
+    # Mock notes
+    _mock_notes()
+
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
+    assert job["result"]["enriched"] == 1
+
+    # Verify id_tripadvisor was NOT included in the update
+    patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
+    assert len(patch_calls) == 1
+    body = json.loads(patch_calls[0].request.content)
+    assert "id_tripadvisor" not in body["properties"]
 
 
 @respx.mock
