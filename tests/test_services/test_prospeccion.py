@@ -908,3 +908,74 @@ async def test_no_google_places_skips_state():
     update_args = hubspot.update_company.call_args
     props = update_args[0][1]
     assert "state" not in props
+
+
+# --- error note tests ---
+
+
+@pytest.mark.asyncio
+async def test_no_phone_creates_error_note():
+    """no_phone path creates an error note in HubSpot."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company(phone=None)
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+
+    service = ProspeccionService(hubspot, elevenlabs)
+    result = await service.run(company_id="C1")
+
+    assert result.status == "no_phone"
+    hubspot.create_note.assert_called_once()
+    note_body = hubspot.create_note.call_args[0][1]
+    assert "Error - Agente Llamada Prospeccion" in note_body
+    assert "no_phone" in note_body
+
+
+@pytest.mark.asyncio
+async def test_all_failed_creates_error_note():
+    """all_failed path creates an error note with attempt details."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company(phone="+56 1 1111")
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=False, message="No answer"
+    )
+
+    service = ProspeccionService(hubspot, elevenlabs)
+    result = await service.run(company_id="C1")
+
+    assert result.status == "all_failed"
+    hubspot.create_note.assert_called_once()
+    note_body = hubspot.create_note.call_args[0][1]
+    assert "Error - Agente Llamada Prospeccion" in note_body
+    assert "all_failed" in note_body
+    assert "+56 1 1111" in note_body
+
+
+@pytest.mark.asyncio
+async def test_error_note_failure_doesnt_block_no_phone():
+    """If error note creation fails in no_phone path, result is still returned."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company(phone=None)
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+    hubspot.create_note.side_effect = Exception("Note failed")
+
+    service = ProspeccionService(hubspot, elevenlabs)
+    result = await service.run(company_id="C1")
+
+    assert result.status == "no_phone"

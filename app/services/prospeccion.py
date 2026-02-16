@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.call_note_builder import build_prospeccion_note
+from app.mappers.note_builder import build_error_note
 from app.schemas.elevenlabs import ConversationResponse
 from app.schemas.hubspot import HubSpotCompany, HubSpotContact, HubSpotEmail, HubSpotNote
 from app.schemas.responses import CallAttempt, ExtractedCallData, ProspeccionResponse
@@ -132,15 +133,21 @@ class ProspeccionService:
             return await self._process_company(company)
         except Exception as exc:
             logger.exception("Error processing company %s", company.id)
+            error_msg = str(exc)
             try:
                 await self._hubspot.update_company(company.id, {"agente": ""})
             except Exception:
                 logger.exception("Failed to clear agente for company %s", company.id)
+            try:
+                note = build_error_note("Llamada Prospeccion", company.properties.name, "error", error_msg)
+                await self._hubspot.create_note(company.id, note)
+            except Exception:
+                logger.exception("Failed to create error note for company %s", company.id)
             return ProspeccionResponse(
                 company_id=company.id,
                 company_name=company.properties.name,
                 status="error",
-                message=str(exc),
+                message=error_msg,
             )
 
     async def _process_company(
@@ -166,11 +173,17 @@ class ProspeccionService:
         phone_list = self._build_phone_list(company, contacts)
         if not phone_list:
             await self._hubspot.update_company(company.id, {"agente": ""})
+            no_phone_msg = "No phone numbers found for company or contacts"
+            try:
+                note = build_error_note("Llamada Prospeccion", company.properties.name, "no_phone", no_phone_msg)
+                await self._hubspot.create_note(company.id, note)
+            except Exception:
+                logger.exception("Failed to create error note for company %s", company.id)
             return ProspeccionResponse(
                 company_id=company.id,
                 company_name=company.properties.name,
                 status="no_phone",
-                message="No phone numbers found for company or contacts",
+                message=no_phone_msg,
             )
 
         # Build dynamic variables for ElevenLabs agent
@@ -195,6 +208,16 @@ class ProspeccionService:
         # All phones failed
         if successful_conversation is None:
             await self._hubspot.update_company(company.id, {"agente": ""})
+            attempt_details = "; ".join(
+                f"{a.phone_number} ({a.source}): {a.error or a.status}"
+                for a in call_attempts
+            )
+            all_failed_msg = f"All phone numbers failed. Attempts: {attempt_details}"
+            try:
+                note = build_error_note("Llamada Prospeccion", company.properties.name, "all_failed", all_failed_msg)
+                await self._hubspot.create_note(company.id, note)
+            except Exception:
+                logger.exception("Failed to create error note for company %s", company.id)
             return ProspeccionResponse(
                 company_id=company.id,
                 company_name=company.properties.name,

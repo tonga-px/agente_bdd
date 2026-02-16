@@ -195,6 +195,23 @@ def _format_tripadvisor_photos(photos: list[TripAdvisorPhoto]) -> str | None:
     return f'<h3>Fotos TripAdvisor</h3><table>{"".join(rows)}</table>'
 
 
+def build_error_note(
+    agent_name: str,
+    company_name: str | None,
+    status: str,
+    message: str,
+) -> str:
+    """Build an HTML error note for a HubSpot company."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"<h2>\u26a0\ufe0f Error - Agente {escape(agent_name)}</h2>"
+        f"<p><em>Fecha: {now}</em></p>"
+        f"<p><strong>Estado:</strong> {escape(status)}</p>"
+        f"<p><strong>Empresa:</strong> {escape(company_name or 'Desconocida')}</p>"
+        f"<p><strong>Error:</strong> {escape(message)}</p>"
+    )
+
+
 def build_enrichment_note(
     company_name: str | None,
     place: GooglePlace | None,

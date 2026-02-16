@@ -4,7 +4,7 @@ import logging
 from app.exceptions.custom import GooglePlacesError, RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
-from app.mappers.note_builder import build_enrichment_note
+from app.mappers.note_builder import build_enrichment_note, build_error_note
 from app.schemas.responses import CompanyResult, EnrichmentResponse
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
@@ -55,27 +55,39 @@ class EnrichmentService:
                 logger.warning(
                     "Rate limit hit (%s), stopping with partial results", exc.service
                 )
+                error_msg = f"Rate limit: {exc.service}"
                 results.append(
                     CompanyResult(
                         company_id=company.id,
                         company_name=company.properties.name,
                         status="error",
-                        message=f"Rate limit: {exc.service}",
+                        message=error_msg,
                     )
                 )
+                try:
+                    note = build_error_note("Datos", company.properties.name, "error", error_msg)
+                    await self._hubspot.create_note(company.id, note)
+                except Exception:
+                    logger.exception("Failed to create error note for company %s", company.id)
                 errors += 1
                 break
 
             except Exception as exc:
                 logger.exception("Error processing company %s", company.id)
+                error_msg = str(exc)
                 results.append(
                     CompanyResult(
                         company_id=company.id,
                         company_name=company.properties.name,
                         status="error",
-                        message=str(exc),
+                        message=error_msg,
                     )
                 )
+                try:
+                    note = build_error_note("Datos", company.properties.name, "error", error_msg)
+                    await self._hubspot.create_note(company.id, note)
+                except Exception:
+                    logger.exception("Failed to create error note for company %s", company.id)
                 errors += 1
 
             await asyncio.sleep(HUBSPOT_DELAY)

@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from app.mappers.note_builder import build_enrichment_note
+from app.mappers.note_builder import build_enrichment_note, build_error_note
 from app.schemas.google_places import GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 
@@ -204,3 +204,33 @@ def test_tripadvisor_no_small_url_skips_photo():
     assert result.count("<img") == 1
     assert "https://img.ta/small.jpg" in result
     assert "https://img.ta/big.jpg" not in result
+
+
+# --- build_error_note tests ---
+
+
+def test_error_note_contains_all_fields():
+    result = build_error_note("Datos", "Hotel Test", "error", "Something went wrong")
+    assert "Error - Agente Datos" in result
+    assert "Fecha:" in result
+    assert "error" in result
+    assert "Hotel Test" in result
+    assert "Something went wrong" in result
+
+
+def test_error_note_escapes_html():
+    result = build_error_note(
+        "<script>x</script>",
+        "<b>Evil</b>",
+        "error",
+        "<img src=x onerror=alert(1)>",
+    )
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+    assert "&lt;b&gt;Evil&lt;/b&gt;" in result
+    assert "&lt;img " in result
+
+
+def test_error_note_none_company_name():
+    result = build_error_note("Datos", None, "error", "fail")
+    assert "Desconocida" in result
