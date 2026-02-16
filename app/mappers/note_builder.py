@@ -184,11 +184,15 @@ def _format_tripadvisor_photos(photos: list[TripAdvisorPhoto]) -> str | None:
             break
     if not urls:
         return None
-    imgs = "".join(
-        f'<img src="{escape(u)}" width="150" height="150" style="margin:4px;" />'
-        for u in urls
-    )
-    return f"<h3>Fotos TripAdvisor</h3>{imgs}"
+    cols = 5
+    rows: list[str] = []
+    for i in range(0, len(urls), cols):
+        cells = "".join(
+            f'<td style="padding:4px;"><img src="{escape(u)}" width="150" height="150" /></td>'
+            for u in urls[i:i + cols]
+        )
+        rows.append(f"<tr>{cells}</tr>")
+    return f'<h3>Fotos TripAdvisor</h3><table>{"".join(rows)}</table>'
 
 
 def build_enrichment_note(
