@@ -31,7 +31,7 @@ class TripAdvisorLocation(BaseModel):
 
 
 class TripAdvisorPhoto(BaseModel):
-    id: str = ""
+    id: int | str = ""
     caption: str | None = None
     images: dict = {}
 
