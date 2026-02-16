@@ -8,9 +8,19 @@ from app.mappers.note_builder import build_enrichment_note, build_error_note
 from app.schemas.responses import CompanyResult, EnrichmentResponse
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
+from app.schemas.google_places import GooglePlace
+from app.schemas.tripadvisor import TripAdvisorLocation
 from app.services.tripadvisor import TripAdvisorService, clean_name
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_phone(phone: str) -> str:
+    """Ensure phone number starts with '+' for E.164 format."""
+    phone = phone.strip()
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    return phone
 
 HUBSPOT_DELAY = 0.5  # seconds between HubSpot calls
 MAX_COMPANIES_PER_REQUEST = 1
@@ -201,6 +211,9 @@ class EnrichmentService:
                 company.id,
             )
 
+        # --- Create contacts from phone numbers (best-effort) ---
+        await self._create_phone_contacts(company.id, props.name, place, ta_location)
+
         return CompanyResult(
             company_id=company.id,
             company_name=props.name,
@@ -208,3 +221,71 @@ class EnrichmentService:
             changes=changes,
             note=note_body,
         )
+
+    async def _create_phone_contacts(
+        self,
+        company_id: str,
+        company_name: str | None,
+        place: GooglePlace | None,
+        ta_location: TripAdvisorLocation | None,
+    ) -> None:
+        """Create contacts with phone numbers from Google Places / TripAdvisor (best-effort)."""
+        try:
+            # Collect phones: list of (normalized_phone, source_label)
+            phones: list[tuple[str, str]] = []
+
+            if place:
+                raw = place.internationalPhoneNumber or place.nationalPhoneNumber
+                if raw and raw.strip():
+                    phones.append((_normalize_phone(raw), "Google Places"))
+
+            if ta_location and ta_location.phone and ta_location.phone.strip():
+                phones.append((_normalize_phone(ta_location.phone), "TripAdvisor"))
+
+            if not phones:
+                return
+
+            # Deduplicate by digits-only representation
+            def _digits(p: str) -> str:
+                return "".join(ch for ch in p if ch.isdigit())
+
+            unique: list[tuple[str, str]] = []
+            seen_digits: set[str] = set()
+            for phone, source in phones:
+                d = _digits(phone)
+                if d not in seen_digits:
+                    seen_digits.add(d)
+                    unique.append((phone, source))
+
+            # Get existing contacts to avoid duplicating phones
+            existing_contacts = await self._hubspot.get_associated_contacts(company_id)
+            existing_phones: set[str] = set()
+            for c in existing_contacts:
+                for field in (c.properties.phone, c.properties.mobilephone):
+                    if field and field.strip():
+                        existing_phones.add(_digits(field))
+
+            # Create a contact per new phone
+            name = company_name or "Hotel"
+            for phone, source in unique:
+                if _digits(phone) in existing_phones:
+                    logger.info(
+                        "Phone %s already exists in contacts for company %s, skipping",
+                        phone, company_id,
+                    )
+                    continue
+                props = {
+                    "firstname": f"Recepcion {name}",
+                    "lastname": source,
+                    "phone": phone,
+                }
+                await self._hubspot.create_contact(company_id, props)
+                logger.info(
+                    "Created %s phone contact (%s) for company %s",
+                    source, phone, company_id,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to create phone contacts for company %s, enrichment still succeeded",
+                company_id,
+            )
