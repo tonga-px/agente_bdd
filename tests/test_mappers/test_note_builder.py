@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 from app.mappers.note_builder import build_enrichment_note
 from app.schemas.google_places import GooglePlace
-from app.schemas.tripadvisor import TripAdvisorLocation
+from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 
 
 def _mock_now():
@@ -168,3 +168,39 @@ def test_html_escaping():
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
     assert "&lt;b&gt;Evil&lt;/b&gt;" in result
+
+
+def test_tripadvisor_with_photos():
+    ta = TripAdvisorLocation(location_id="1", rating="4.0", num_reviews="100")
+    photos = [
+        TripAdvisorPhoto(id="1", images={"small": {"url": "https://img.ta/1.jpg"}}),
+        TripAdvisorPhoto(id="2", images={"small": {"url": "https://img.ta/2.jpg"}}),
+    ]
+    result = build_enrichment_note("Test", None, ta, ta_photos=photos)
+    assert "Fotos TripAdvisor" in result
+    assert "<img" in result
+    assert "https://img.ta/1.jpg" in result
+    assert "https://img.ta/2.jpg" in result
+
+
+def test_tripadvisor_photos_limit_10():
+    photos = [
+        TripAdvisorPhoto(id=str(i), images={"small": {"url": f"https://img.ta/{i}.jpg"}})
+        for i in range(15)
+    ]
+    result = build_enrichment_note("Test", None, None, ta_photos=photos)
+    assert result.count("<img") == 10
+    assert "https://img.ta/9.jpg" in result
+    assert "https://img.ta/10.jpg" not in result
+
+
+def test_tripadvisor_no_small_url_skips_photo():
+    photos = [
+        TripAdvisorPhoto(id="1", images={"large": {"url": "https://img.ta/big.jpg"}}),
+        TripAdvisorPhoto(id="2", images={"small": {"url": "https://img.ta/small.jpg"}}),
+        TripAdvisorPhoto(id="3", images={}),
+    ]
+    result = build_enrichment_note("Test", None, None, ta_photos=photos)
+    assert result.count("<img") == 1
+    assert "https://img.ta/small.jpg" in result
+    assert "https://img.ta/big.jpg" not in result

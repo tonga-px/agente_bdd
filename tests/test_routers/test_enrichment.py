@@ -13,6 +13,7 @@ GOOGLE_PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
 GOOGLE_DETAILS_URL = "https://places.googleapis.com/v1/places/ChIJN1t_tDeuEmsRUsoyG83frY4"
 TA_SEARCH_URL = "https://api.content.tripadvisor.com/api/v1/location/search"
 TA_DETAILS_URL = "https://api.content.tripadvisor.com/api/v1/location/999/details"
+TA_PHOTOS_URL = "https://api.content.tripadvisor.com/api/v1/location/{location_id}/photos"
 
 
 def _mock_ta_search(location_id="999", name="Acme Corp"):
@@ -49,6 +50,26 @@ def _mock_ta_details(location_id="999"):
                 "review_rating_count": {"5": 500, "4": 200, "3": 50, "2": 10, "1": 5},
                 "phone": "+56 2 1234 5678",
                 "email": "info@acmehotel.cl",
+            },
+        )
+    )
+
+
+def _mock_ta_photos(location_id="999"):
+    """Mock TripAdvisor photos endpoint."""
+    respx.get(
+        TA_PHOTOS_URL.format(location_id=location_id)
+    ).mock(
+        return_value=Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "1",
+                        "caption": "Pool",
+                        "images": {"small": {"url": "https://img.ta/1.jpg", "width": 150, "height": 150}},
+                    },
+                ]
             },
         )
     )
@@ -149,6 +170,7 @@ async def test_enrich_full_flow(client):
     # Mock TripAdvisor
     _mock_ta_search()
     _mock_ta_details()
+    _mock_ta_photos()
 
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
@@ -169,6 +191,7 @@ async def test_enrich_full_flow(client):
     assert result["company_id"] == "12345"
     assert result["status"] == "enriched"
     assert len(result["changes"]) > 0
+    assert "Fotos TripAdvisor" in result["note"]
 
     # Verify id_tripadvisor was sent to HubSpot
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
@@ -291,6 +314,7 @@ async def test_enrich_with_id_hotel(client):
     # Mock TripAdvisor
     _mock_ta_search()
     _mock_ta_details()
+    _mock_ta_photos()
 
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
@@ -364,6 +388,7 @@ async def test_enrich_with_company_id_in_body(client):
     # Mock TripAdvisor
     _mock_ta_search(name="Single Corp")
     _mock_ta_details()
+    _mock_ta_photos()
 
     # Mock HubSpot update
     respx.patch("https://api.hubapi.com/crm/v3/objects/companies/67890").mock(
@@ -523,6 +548,7 @@ async def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
     # Mock TripAdvisor
     _mock_ta_search(name="Salguero Suites")
     _mock_ta_details()
+    _mock_ta_photos()
 
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
@@ -600,6 +626,7 @@ async def test_enrich_does_not_overwrite_existing_tripadvisor_id(client):
 
     # Mock TripAdvisor — uses get_details since id_tripadvisor exists
     _mock_ta_details(location_id="888")
+    _mock_ta_photos(location_id="888")
 
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))

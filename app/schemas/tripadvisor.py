@@ -28,3 +28,13 @@ class TripAdvisorLocation(BaseModel):
     review_rating_count: dict | None = None
     phone: str | None = None
     email: str | None = None
+
+
+class TripAdvisorPhoto(BaseModel):
+    id: str = ""
+    caption: str | None = None
+    images: dict = {}
+
+
+class TripAdvisorPhotosResponse(BaseModel):
+    data: list[TripAdvisorPhoto] = []

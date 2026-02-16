@@ -112,6 +112,7 @@ class EnrichmentService:
 
         # --- TripAdvisor (isolated, never blocks enrichment) ---
         ta_location = None
+        ta_photos = None
         if self._tripadvisor:
             try:
                 if props.id_tripadvisor and props.id_tripadvisor.strip():
@@ -133,6 +134,20 @@ class EnrichmentService:
                     "TripAdvisor failed for company %s, continuing without it",
                     company.id,
                 )
+
+            # Fetch photos (separate try/except — photos failure never blocks)
+            location_id = (
+                ta_location.location_id if ta_location
+                else (props.id_tripadvisor or "").strip()
+            )
+            if location_id:
+                try:
+                    ta_photos = await self._tripadvisor.get_photos(location_id)
+                except Exception:
+                    logger.exception(
+                        "TripAdvisor photos failed for company %s, continuing without them",
+                        company.id,
+                    )
 
         # --- Merge results ---
         if place is None and ta_location is None:
@@ -165,7 +180,7 @@ class EnrichmentService:
         await self._hubspot.update_company(company.id, updates)
 
         # --- Create enrichment note ---
-        note_body = build_enrichment_note(props.name, place, ta_location)
+        note_body = build_enrichment_note(props.name, place, ta_location, ta_photos=ta_photos)
         try:
             await self._hubspot.create_note(company.id, note_body)
         except Exception:

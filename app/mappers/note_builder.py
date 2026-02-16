@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from html import escape
 
 from app.schemas.google_places import GooglePlace
-from app.schemas.tripadvisor import TripAdvisorLocation
+from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 
 _PRICE_LEVEL_MAP = {
     "PRICE_LEVEL_INEXPENSIVE": "\U0001f4b0",
@@ -174,10 +174,28 @@ def _format_tripadvisor_section(ta: TripAdvisorLocation) -> str | None:
     return f"<h3>TripAdvisor</h3><ul>{''.join(rows)}</ul>"
 
 
+def _format_tripadvisor_photos(photos: list[TripAdvisorPhoto]) -> str | None:
+    urls: list[str] = []
+    for photo in photos:
+        url = photo.images.get("small", {}).get("url")
+        if url:
+            urls.append(url)
+        if len(urls) >= 10:
+            break
+    if not urls:
+        return None
+    imgs = "".join(
+        f'<img src="{escape(u)}" width="150" height="150" style="margin:4px;" />'
+        for u in urls
+    )
+    return f"<h3>Fotos TripAdvisor</h3>{imgs}"
+
+
 def build_enrichment_note(
     company_name: str | None,
     place: GooglePlace | None,
     ta_location: TripAdvisorLocation | None,
+    ta_photos: list[TripAdvisorPhoto] | None = None,
 ) -> str:
     """Build an HTML enrichment summary for a HubSpot note."""
     title = escape(company_name or "Empresa")
@@ -196,6 +214,11 @@ def build_enrichment_note(
         section = _format_tripadvisor_section(ta_location)
         if section:
             parts.append(section)
+
+    if ta_photos:
+        photos_section = _format_tripadvisor_photos(ta_photos)
+        if photos_section:
+            parts.append(photos_section)
 
     if not place and not ta_location:
         parts.append("<p>No se encontraron datos en ninguna fuente.</p>")

@@ -145,3 +145,69 @@ async def test_search_and_get_details_no_results(service):
 
     loc = await service.search_and_get_details("Nonexistent")
     assert loc is None
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_photos_success(service):
+    respx.get(
+        "https://api.content.tripadvisor.com/api/v1/location/123456/photos"
+    ).mock(
+        return_value=Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "1",
+                        "caption": "Pool",
+                        "images": {"small": {"url": "https://img.ta/1.jpg", "width": 150, "height": 150}},
+                    },
+                    {
+                        "id": "2",
+                        "caption": "Lobby",
+                        "images": {"small": {"url": "https://img.ta/2.jpg", "width": 150, "height": 150}},
+                    },
+                ]
+            },
+        )
+    )
+
+    photos = await service.get_photos("123456")
+    assert len(photos) == 2
+    assert photos[0].id == "1"
+    assert photos[0].images["small"]["url"] == "https://img.ta/1.jpg"
+    assert photos[1].caption == "Lobby"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_photos_empty(service):
+    respx.get(
+        "https://api.content.tripadvisor.com/api/v1/location/123456/photos"
+    ).mock(return_value=Response(200, json={"data": []}))
+
+    photos = await service.get_photos("123456")
+    assert photos == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_photos_rate_limit(service):
+    respx.get(
+        "https://api.content.tripadvisor.com/api/v1/location/123456/photos"
+    ).mock(return_value=Response(429, text="Rate limit exceeded"))
+
+    with pytest.raises(RateLimitError):
+        await service.get_photos("123456")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_photos_error(service):
+    respx.get(
+        "https://api.content.tripadvisor.com/api/v1/location/123456/photos"
+    ).mock(return_value=Response(500, text="Internal Server Error"))
+
+    with pytest.raises(TripAdvisorError) as exc_info:
+        await service.get_photos("123456")
+    assert exc_info.value.status_code == 500

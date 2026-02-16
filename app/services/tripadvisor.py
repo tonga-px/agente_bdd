@@ -7,6 +7,8 @@ import httpx
 from app.exceptions.custom import RateLimitError, TripAdvisorError
 from app.schemas.tripadvisor import (
     TripAdvisorLocation,
+    TripAdvisorPhoto,
+    TripAdvisorPhotosResponse,
     TripAdvisorSearchResponse,
 )
 
@@ -14,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://api.content.tripadvisor.com/api/v1/location/search"
 DETAILS_URL = "https://api.content.tripadvisor.com/api/v1/location/{location_id}/details"
+PHOTOS_URL = "https://api.content.tripadvisor.com/api/v1/location/{location_id}/photos"
 
 # Words too generic to count as a name match
 _STOP_WORDS = frozenset({
@@ -118,6 +121,24 @@ class TripAdvisorService:
             raise TripAdvisorError(resp.text, status_code=resp.status_code)
 
         return TripAdvisorLocation(**resp.json())
+
+    async def get_photos(self, location_id: str, limit: int = 10) -> list[TripAdvisorPhoto]:
+        """Get photos for a location. Returns up to `limit` photos."""
+        url = PHOTOS_URL.format(location_id=location_id)
+        params = {
+            "key": self._api_key,
+            "language": "es",
+            "limit": str(limit),
+        }
+
+        resp = await self._client.get(url, params=params, headers=self._headers)
+
+        if resp.status_code == 429:
+            raise RateLimitError("TripAdvisor")
+        if resp.status_code >= 400:
+            raise TripAdvisorError(resp.text, status_code=resp.status_code)
+
+        return TripAdvisorPhotosResponse(**resp.json()).data
 
     async def search_and_get_details(self, query: str, company_name: str | None = None, lat_long: str | None = None) -> TripAdvisorLocation | None:
         """Search by query and return full details, or None."""
