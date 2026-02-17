@@ -66,7 +66,7 @@ def build_prospeccion_note(
             f"{''.join(table_rows)}</table>"
         )
 
-    # Call attempts detail (collapsed)
+    # Call attempts detail
     if call_attempts:
         rows: list[str] = []
         for attempt in call_attempts:
@@ -75,7 +75,7 @@ def build_prospeccion_note(
             source = escape(_friendly_source(attempt.source))
             row = f"<li>{emoji} {phone} ({source})"
             if attempt.error:
-                row += f" - <em>{escape(attempt.error)}</em>"
+                row += f"<br>&nbsp;&nbsp;&nbsp;Motivo: <strong>{escape(attempt.error)}</strong>"
             row += "</li>"
             rows.append(row)
         parts.append(f"<h3>Intentos de llamada</h3><ul>{''.join(rows)}</ul>")

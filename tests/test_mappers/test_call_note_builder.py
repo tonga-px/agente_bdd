@@ -39,6 +39,7 @@ def test_full_note():
     # Attempts section
     assert "Intentos de llamada" in html
     assert "+56 1 1111" in html
+    assert "Motivo:" in html
     assert "No answer" in html
     assert "+56 2 2222" in html
     # Friendly source labels

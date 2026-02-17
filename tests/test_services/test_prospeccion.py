@@ -24,6 +24,7 @@ from app.services.hubspot import HubSpotService
 from app.services.prospeccion import (
     ProspeccionService,
     _compute_market_fit,
+    _describe_error,
     _parse_num_rooms,
     _split_name,
 )
@@ -981,3 +982,26 @@ async def test_error_note_failure_doesnt_block_no_phone():
     result = await service.run(company_id="C1")
 
     assert result.status == "no_phone"
+
+
+# --- _describe_error tests ---
+
+
+def test_describe_error_read_timeout():
+    assert "Tiempo de espera" in _describe_error(httpx.ReadTimeout("timed out"))
+
+
+def test_describe_error_connect_timeout():
+    assert "No se pudo conectar" in _describe_error(httpx.ConnectTimeout("connect timed out"))
+
+
+def test_describe_error_connect_error():
+    assert "conexión" in _describe_error(httpx.ConnectError("refused"))
+
+
+def test_describe_error_generic_with_message():
+    assert _describe_error(Exception("Something broke")) == "Something broke"
+
+
+def test_describe_error_generic_empty_message():
+    assert _describe_error(Exception()) == "Exception"

@@ -103,6 +103,25 @@ def _compute_market_fit(num_rooms: int) -> str:
     return "Elefante"
 
 
+def _describe_error(exc: Exception) -> str:
+    """Return a human-readable description for common call exceptions."""
+    import httpx
+
+    if isinstance(exc, httpx.ReadTimeout):
+        return "Tiempo de espera agotado (ReadTimeout)"
+    if isinstance(exc, httpx.ConnectTimeout):
+        return "No se pudo conectar al servidor (ConnectTimeout)"
+    if isinstance(exc, httpx.ConnectError):
+        return "Error de conexión"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    # Generic fallback: prefer str(exc), else class name
+    text = str(exc).strip()
+    if text:
+        return text
+    return type(exc).__name__
+
+
 class ProspeccionService:
     def __init__(
         self,
@@ -404,7 +423,7 @@ class ProspeccionService:
                 phone_number=phone,
                 source=source,
                 status="error",
-                error=str(exc),
+                error=_describe_error(exc),
             )
 
     async def _fetch_with_analysis(
