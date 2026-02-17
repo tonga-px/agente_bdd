@@ -261,10 +261,10 @@ def build_enrichment_note(
         f"<p><em>Fecha: {now}</em></p>",
     ]
 
-    if place:
-        section = _format_google_section(place)
-        if section:
-            parts.append(section)
+    if web_data:
+        web_section = _format_website_section(web_data)
+        if web_section:
+            parts.append(web_section)
 
     if ta_location:
         section = _format_tripadvisor_section(ta_location)
@@ -276,10 +276,10 @@ def build_enrichment_note(
         if photos_section:
             parts.append(photos_section)
 
-    if web_data:
-        web_section = _format_website_section(web_data)
-        if web_section:
-            parts.append(web_section)
+    if place:
+        section = _format_google_section(place)
+        if section:
+            parts.append(section)
 
     if not place and not ta_location:
         parts.append("<p>No se encontraron datos en ninguna fuente.</p>")
