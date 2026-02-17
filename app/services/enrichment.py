@@ -16,11 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_phone(phone: str) -> str:
-    """Ensure phone number starts with '+' for E.164 format."""
-    phone = phone.strip()
-    if not phone.startswith("+"):
-        phone = "+" + phone
-    return phone
+    """Normalize phone to E.164: strip non-digits, prepend '+'."""
+    digits = "".join(c for c in phone if c.isdigit())
+    return f"+{digits}" if digits else ""
 
 HUBSPOT_DELAY = 0.5  # seconds between HubSpot calls
 MAX_COMPANIES_PER_REQUEST = 1
@@ -192,6 +190,14 @@ class EnrichmentService:
             updates.update(google_updates)
             changes.extend(google_changes)
 
+        # Normalize company phone to E.164
+        if "phone" in updates:
+            updates["phone"] = _normalize_phone(updates["phone"])
+        elif props.phone and props.phone.strip():
+            normalized = _normalize_phone(props.phone)
+            if normalized != props.phone:
+                updates["phone"] = normalized
+
         if ta_location and ta_location.location_id:
             if self._overwrite or not (props.id_tripadvisor and props.id_tripadvisor.strip()):
                 updates["id_tripadvisor"] = ta_location.location_id
@@ -229,35 +235,39 @@ class EnrichmentService:
         place: GooglePlace | None,
         ta_location: TripAdvisorLocation | None,
     ) -> None:
-        """Create contacts with phone numbers from Google Places / TripAdvisor (best-effort)."""
+        """Create a contact for TripAdvisor phone if it differs from Google's (best-effort).
+
+        The Google phone is already on the company field, so we only create a
+        contact when TripAdvisor provides a *different* phone number.
+        """
         try:
-            # Collect phones: list of (normalized_phone, source_label)
-            phones: list[tuple[str, str]] = []
-
-            if place:
-                raw = place.internationalPhoneNumber or place.nationalPhoneNumber
-                if raw and raw.strip():
-                    phones.append((_normalize_phone(raw), "Google Places"))
-
-            if ta_location and ta_location.phone and ta_location.phone.strip():
-                phones.append((_normalize_phone(ta_location.phone), "TripAdvisor"))
-
-            if not phones:
-                return
-
-            # Deduplicate by digits-only representation
             def _digits(p: str) -> str:
                 return "".join(ch for ch in p if ch.isdigit())
 
-            unique: list[tuple[str, str]] = []
-            seen_digits: set[str] = set()
-            for phone, source in phones:
-                d = _digits(phone)
-                if d not in seen_digits:
-                    seen_digits.add(d)
-                    unique.append((phone, source))
+            # Get Google E.164 phone (for comparison)
+            google_phone = ""
+            if place:
+                raw = place.internationalPhoneNumber or place.nationalPhoneNumber
+                if raw and raw.strip():
+                    google_phone = _normalize_phone(raw)
 
-            # Get existing contacts to avoid duplicating phones
+            # Get TripAdvisor E.164 phone
+            ta_phone = ""
+            if ta_location and ta_location.phone and ta_location.phone.strip():
+                ta_phone = _normalize_phone(ta_location.phone)
+
+            if not ta_phone:
+                return
+
+            # Skip if same digits as Google phone
+            if google_phone and _digits(ta_phone) == _digits(google_phone):
+                logger.info(
+                    "TripAdvisor phone %s same as Google phone, skipping contact",
+                    ta_phone,
+                )
+                return
+
+            # Check existing contacts to avoid duplicates
             existing_contacts = await self._hubspot.get_associated_contacts(company_id)
             existing_phones: set[str] = set()
             for c in existing_contacts:
@@ -265,25 +275,24 @@ class EnrichmentService:
                     if field and field.strip():
                         existing_phones.add(_digits(field))
 
-            # Create a contact per new phone
-            name = company_name or "Hotel"
-            for phone, source in unique:
-                if _digits(phone) in existing_phones:
-                    logger.info(
-                        "Phone %s already exists in contacts for company %s, skipping",
-                        phone, company_id,
-                    )
-                    continue
-                props = {
-                    "firstname": f"Recepcion {name}",
-                    "lastname": source,
-                    "phone": phone,
-                }
-                await self._hubspot.create_contact(company_id, props)
+            if _digits(ta_phone) in existing_phones:
                 logger.info(
-                    "Created %s phone contact (%s) for company %s",
-                    source, phone, company_id,
+                    "Phone %s already exists in contacts for company %s, skipping",
+                    ta_phone, company_id,
                 )
+                return
+
+            name = company_name or "Hotel"
+            props = {
+                "firstname": f"Recepcion {name}",
+                "lastname": "/ TripAdvisor",
+                "phone": ta_phone,
+            }
+            await self._hubspot.create_contact(company_id, props)
+            logger.info(
+                "Created TripAdvisor phone contact (%s) for company %s",
+                ta_phone, company_id,
+            )
         except Exception:
             logger.exception(
                 "Failed to create phone contacts for company %s, enrichment still succeeded",

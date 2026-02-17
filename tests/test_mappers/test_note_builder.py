@@ -56,7 +56,7 @@ def test_full_google_and_tripadvisor():
     assert "1,234 reviews" in result
     assert "Operativo" in result
     assert "Av. Belgrano 1041, Mendoza" in result
-    assert "0261 405-1900" in result
+    assert "+542614051900" in result
     assert "diplomatichotel.com.ar" in result
     assert "Ver en Google Maps" in result
     # TripAdvisor section
@@ -72,7 +72,7 @@ def test_full_google_and_tripadvisor():
     assert "Familias 30%" in result
     assert "800" in result
     assert "Un hermoso hotel en el centro de Mendoza." in result
-    assert "+54 261 405 1900" in result
+    assert "+542614051900" in result
     assert "info@diplomatic.com" in result
     assert "Ver en TripAdvisor" in result
 

@@ -11,6 +11,12 @@ _PRICE_LEVEL_MAP = {
     "PRICE_LEVEL_VERY_EXPENSIVE": "\U0001f4b0\U0001f4b0\U0001f4b0\U0001f4b0",
 }
 
+def _to_e164(phone: str) -> str:
+    """Normalize phone to E.164 for display: strip non-digits, prepend '+'."""
+    digits = "".join(c for c in phone if c.isdigit())
+    return f"+{digits}" if digits else ""
+
+
 _BUSINESS_STATUS_MAP = {
     "OPERATIONAL": ("\u2705", "Operativo"),
     "CLOSED_TEMPORARILY": ("\u26a0\ufe0f", "Cerrado temporalmente"),
@@ -50,7 +56,7 @@ def _format_google_section(place: GooglePlace) -> str | None:
     # Phone
     phone = place.nationalPhoneNumber or place.internationalPhoneNumber
     if phone:
-        rows.append(f"<li><strong>Telefono:</strong> {escape(phone)}</li>")
+        rows.append(f"<li><strong>Telefono:</strong> {escape(_to_e164(phone))}</li>")
 
     # Website
     if place.websiteUri:
@@ -156,7 +162,7 @@ def _format_tripadvisor_section(ta: TripAdvisorLocation) -> str | None:
 
     # Phone
     if ta.phone:
-        rows.append(f"<li><strong>Telefono:</strong> {escape(ta.phone)}</li>")
+        rows.append(f"<li><strong>Telefono:</strong> {escape(_to_e164(ta.phone))}</li>")
 
     # Email
     if ta.email:

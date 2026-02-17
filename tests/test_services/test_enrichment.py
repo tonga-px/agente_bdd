@@ -63,26 +63,19 @@ def _contact(contact_id="100", phone=None, mobile=None):
 
 
 @pytest.mark.asyncio
-async def test_creates_google_contact(service, hubspot_mock):
-    """Google Places has a phone → one contact created."""
+async def test_google_only_no_contact(service, hubspot_mock):
+    """Google Places phone only → no contact created (phone goes to company field)."""
     place = _place(phone_intl="+34 911 234 567")
 
     await service._create_phone_contacts("C1", "Hotel Sol", place, None)
 
-    hubspot_mock.get_associated_contacts.assert_awaited_once_with("C1")
-    hubspot_mock.create_contact.assert_awaited_once_with(
-        "C1",
-        {
-            "firstname": "Recepcion Hotel Sol",
-            "lastname": "Google Places",
-            "phone": "+34 911 234 567",
-        },
-    )
+    hubspot_mock.get_associated_contacts.assert_not_awaited()
+    hubspot_mock.create_contact.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_creates_tripadvisor_contact(service, hubspot_mock):
-    """TripAdvisor has a phone → one contact created."""
+    """TripAdvisor has a phone (no Google) → one contact created."""
     ta = _ta_location(phone="+52 55 1234 5678")
 
     await service._create_phone_contacts("C1", "Hotel Luna", None, ta)
@@ -91,54 +84,50 @@ async def test_creates_tripadvisor_contact(service, hubspot_mock):
         "C1",
         {
             "firstname": "Recepcion Hotel Luna",
-            "lastname": "TripAdvisor",
-            "phone": "+52 55 1234 5678",
+            "lastname": "/ TripAdvisor",
+            "phone": "+525512345678",
         },
     )
 
 
 @pytest.mark.asyncio
-async def test_creates_both_contacts(service, hubspot_mock):
-    """Both sources have different phones → two contacts created."""
+async def test_creates_tripadvisor_contact_different_from_google(service, hubspot_mock):
+    """Both sources have different phones → only TripAdvisor contact created."""
     place = _place(phone_intl="+34 911 111 111")
     ta = _ta_location(phone="+52 55 222 2222")
 
     await service._create_phone_contacts("C1", "Hotel Mar", place, ta)
 
-    assert hubspot_mock.create_contact.await_count == 2
-    calls = hubspot_mock.create_contact.await_args_list
-    assert calls[0].args == (
+    hubspot_mock.create_contact.assert_awaited_once_with(
         "C1",
-        {"firstname": "Recepcion Hotel Mar", "lastname": "Google Places", "phone": "+34 911 111 111"},
-    )
-    assert calls[1].args == (
-        "C1",
-        {"firstname": "Recepcion Hotel Mar", "lastname": "TripAdvisor", "phone": "+52 55 222 2222"},
+        {
+            "firstname": "Recepcion Hotel Mar",
+            "lastname": "/ TripAdvisor",
+            "phone": "+52552222222",
+        },
     )
 
 
 @pytest.mark.asyncio
 async def test_dedup_same_phone(service, hubspot_mock):
-    """Same phone in both sources → only one contact (Google Places wins)."""
+    """Same phone in both sources → no contact (TripAdvisor skipped, Google on company)."""
     place = _place(phone_intl="+34 911 234 567")
     ta = _ta_location(phone="+34 911 234 567")
 
     await service._create_phone_contacts("C1", "Hotel Rio", place, ta)
 
-    hubspot_mock.create_contact.assert_awaited_once()
-    args = hubspot_mock.create_contact.await_args.args
-    assert args[1]["lastname"] == "Google Places"
+    hubspot_mock.create_contact.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_skips_existing_contact_phone(service, hubspot_mock):
     """Existing contact already has that phone → no new contact."""
-    place = _place(phone_intl="+34 911 234 567")
+    ta = _ta_location(phone="+52 55 1234 5678")
     hubspot_mock.get_associated_contacts.return_value = [
-        _contact(phone="+34 911 234 567"),
+        _contact(phone="+525512345678"),
     ]
 
-    await service._create_phone_contacts("C1", "Hotel Playa", place, None)
+    await service._create_phone_contacts("C1", "Hotel Playa", None, ta)
 
     hubspot_mock.create_contact.assert_not_awaited()
 
@@ -146,11 +135,11 @@ async def test_skips_existing_contact_phone(service, hubspot_mock):
 @pytest.mark.asyncio
 async def test_contact_creation_failure_doesnt_block(service, hubspot_mock):
     """Error in create_contact → no exception raised."""
-    place = _place(phone_intl="+34 911 234 567")
+    ta = _ta_location(phone="+52 55 1234 5678")
     hubspot_mock.create_contact.side_effect = Exception("HubSpot error")
 
     # Should not raise
-    await service._create_phone_contacts("C1", "Hotel Cielo", place, None)
+    await service._create_phone_contacts("C1", "Hotel Cielo", None, ta)
 
 
 @pytest.mark.asyncio
@@ -167,45 +156,63 @@ async def test_no_phones_no_contacts(service, hubspot_mock):
 
 @pytest.mark.asyncio
 async def test_prefers_international_over_national(service, hubspot_mock):
-    """When both international and national phone exist, uses international."""
+    """Google has both international and national → no contact created (Google only)."""
     place = _place(phone_intl="+34 911 234 567", phone_national="911 234 567")
 
     await service._create_phone_contacts("C1", "Hotel Dual", place, None)
 
-    args = hubspot_mock.create_contact.await_args.args
-    assert args[1]["phone"] == "+34 911 234 567"
+    hubspot_mock.create_contact.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_normalizes_phone_without_plus(service, hubspot_mock):
-    """Phone without '+' prefix gets normalized."""
+    """Phone without '+' prefix gets normalized to E.164."""
     ta = _ta_location(phone="52 55 1234 5678")
 
     await service._create_phone_contacts("C1", "Hotel Norm", None, ta)
 
     args = hubspot_mock.create_contact.await_args.args
-    assert args[1]["phone"] == "+52 55 1234 5678"
+    assert args[1]["phone"] == "+525512345678"
 
 
 @pytest.mark.asyncio
 async def test_dedup_ignores_formatting_differences(service, hubspot_mock):
-    """Same digits with different formatting → deduplicated."""
+    """Same digits with different formatting → deduplicated (no contact)."""
     place = _place(phone_intl="+34 911-234-567")
     ta = _ta_location(phone="+34911234567")
 
     await service._create_phone_contacts("C1", "Hotel Format", place, ta)
 
-    hubspot_mock.create_contact.assert_awaited_once()
+    hubspot_mock.create_contact.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_existing_contact_mobile_also_checked(service, hubspot_mock):
     """Existing contact's mobilephone field is also checked for dedup."""
-    place = _place(phone_intl="+34 911 234 567")
+    ta = _ta_location(phone="+52 55 1234 5678")
     hubspot_mock.get_associated_contacts.return_value = [
-        _contact(mobile="+34 911 234 567"),
+        _contact(mobile="+525512345678"),
     ]
 
-    await service._create_phone_contacts("C1", "Hotel Mobile", place, None)
+    await service._create_phone_contacts("C1", "Hotel Mobile", None, ta)
 
     hubspot_mock.create_contact.assert_not_awaited()
+
+
+# --- _normalize_phone tests ---
+
+
+def test_normalize_phone_strips_spaces_dashes():
+    assert _normalize_phone("+34 911-234-567") == "+34911234567"
+
+
+def test_normalize_phone_without_plus():
+    assert _normalize_phone("52 55 1234 5678") == "+525512345678"
+
+
+def test_normalize_phone_already_e164():
+    assert _normalize_phone("+34911234567") == "+34911234567"
+
+
+def test_normalize_phone_empty():
+    assert _normalize_phone("") == ""
