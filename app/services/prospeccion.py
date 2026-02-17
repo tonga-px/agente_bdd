@@ -208,14 +208,11 @@ class ProspeccionService:
         # All phones failed
         if successful_conversation is None:
             await self._hubspot.update_company(company.id, {"agente": ""})
-            attempt_details = "; ".join(
-                f"{a.phone_number} ({a.source}): {a.error or a.status}"
-                for a in call_attempts
+            note_body = build_prospeccion_note(
+                company.properties.name, call_attempts, None, None,
             )
-            all_failed_msg = f"All phone numbers failed. Attempts: {attempt_details}"
             try:
-                note = build_error_note("Llamada Prospeccion", company.properties.name, "all_failed", all_failed_msg)
-                await self._hubspot.create_note(company.id, note)
+                await self._hubspot.create_note(company.id, note_body)
             except Exception:
                 logger.exception("Failed to create error note for company %s", company.id)
             return ProspeccionResponse(
@@ -224,6 +221,7 @@ class ProspeccionService:
                 status="all_failed",
                 message="All phone numbers failed",
                 call_attempts=call_attempts,
+                note=note_body,
             )
 
         # Extract data from conversation
@@ -367,6 +365,17 @@ class ProspeccionService:
                     source=source,
                     status="failed",
                     error=call_resp.message or "Call not started",
+                )
+
+            # ElevenLabs returns success=False with SIP errors but still
+            # includes a conversation_id — no need to poll in that case.
+            if not call_resp.success and call_resp.message:
+                return CallAttempt(
+                    phone_number=phone,
+                    source=source,
+                    conversation_id=call_resp.conversation_id,
+                    status="failed",
+                    error=call_resp.message,
                 )
 
             conversation = await self._poll_conversation(

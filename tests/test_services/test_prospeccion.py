@@ -955,11 +955,13 @@ async def test_all_failed_creates_error_note():
     result = await service.run(company_id="C1")
 
     assert result.status == "all_failed"
+    assert result.note is not None
     hubspot.create_note.assert_called_once()
     note_body = hubspot.create_note.call_args[0][1]
-    assert "Error - Agente Llamada Prospeccion" in note_body
-    assert "all_failed" in note_body
+    assert "Llamada de Prospeccion" in note_body
+    assert "No se pudo conectar" in note_body
     assert "+56 1 1111" in note_body
+    assert "No answer" in note_body
 
 
 @pytest.mark.asyncio

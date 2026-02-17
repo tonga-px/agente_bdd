@@ -41,6 +41,9 @@ def test_full_note():
     assert "+56 1 1111" in html
     assert "No answer" in html
     assert "+56 2 2222" in html
+    # Friendly source labels
+    assert "Empresa" in html
+    assert "Contacto (telefono)" in html
 
 
 def test_note_no_extracted_data():
@@ -50,8 +53,7 @@ def test_note_no_extracted_data():
     html = build_prospeccion_note("Test Hotel", attempts, None, "Agente: Hola")
 
     assert "Llamada de Prospeccion - Test Hotel" in html
-    assert "Datos clave" in html
-    assert "No proporcionado" in html
+    assert "Datos clave" not in html
 
 
 def test_note_no_attempts():
