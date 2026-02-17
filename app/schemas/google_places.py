@@ -12,7 +12,13 @@ class LatLng(BaseModel):
     longitude: float = 0.0
 
 
+class DisplayName(BaseModel):
+    text: str | None = None
+
+
 class GooglePlace(BaseModel):
+    id: str | None = None
+    displayName: DisplayName | None = None
     formattedAddress: str | None = None
     nationalPhoneNumber: str | None = None
     internationalPhoneNumber: str | None = None

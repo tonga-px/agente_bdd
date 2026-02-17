@@ -10,7 +10,6 @@ HUBSPOT_COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies/12345"
 HUBSPOT_GET_COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies/67890"
 HUBSPOT_NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
 GOOGLE_PLACES_URL = "https://places.googleapis.com/v1/places:searchText"
-GOOGLE_DETAILS_URL = "https://places.googleapis.com/v1/places/ChIJN1t_tDeuEmsRUsoyG83frY4"
 TA_SEARCH_URL = "https://api.content.tripadvisor.com/api/v1/location/search"
 TA_DETAILS_URL = "https://api.content.tripadvisor.com/api/v1/location/999/details"
 TA_PHOTOS_URL = "https://api.content.tripadvisor.com/api/v1/location/{location_id}/photos"
@@ -156,6 +155,8 @@ async def test_enrich_full_flow(client):
             json={
                 "places": [
                     {
+                        "id": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+                        "displayName": {"text": "Acme Corp Hotel"},
                         "formattedAddress": "Av. Providencia 123, Santiago, Chile",
                         "nationalPhoneNumber": "+56 2 1234 5678",
                         "websiteUri": "https://acme.cl",
@@ -207,11 +208,13 @@ async def test_enrich_full_flow(client):
     assert len(result["changes"]) > 0
     assert "Fotos TripAdvisor" in result["note"]
 
-    # Verify id_tripadvisor was sent to HubSpot
+    # Verify id_tripadvisor, id_hotel, and name were sent to HubSpot
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
     assert len(patch_calls) == 1
     body = json.loads(patch_calls[0].request.content)
     assert body["properties"]["id_tripadvisor"] == "999"
+    assert body["properties"]["id_hotel"] == "ChIJN1t_tDeuEmsRUsoyG83frY4"
+    assert body["properties"]["name"] == "Acme Corp Hotel"
 
 
 @respx.mock
@@ -277,8 +280,8 @@ async def test_enrich_no_google_results(client):
 
 
 @respx.mock
-async def test_enrich_with_id_hotel(client):
-    # Mock HubSpot search — company has id_hotel
+async def test_enrich_with_id_hotel_uses_text_search(client):
+    """Even when id_hotel exists, enrichment always uses text_search."""
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(
             200,
@@ -305,22 +308,28 @@ async def test_enrich_with_id_hotel(client):
         )
     )
 
-    # Mock Google Places GET (details, not text search)
-    respx.get(GOOGLE_DETAILS_URL).mock(
+    # Mock Google Places POST text_search (NOT GET details)
+    respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(
             200,
             json={
-                "formattedAddress": "Av. Providencia 123, Santiago, Chile",
-                "nationalPhoneNumber": "+56 2 1234 5678",
-                "websiteUri": "https://acme.cl",
-                "addressComponents": [
-                    {"longText": "123", "shortText": "123", "types": ["street_number"]},
-                    {"longText": "Av. Providencia", "shortText": "Av. Providencia", "types": ["route"]},
-                    {"longText": "Santiago", "shortText": "Santiago", "types": ["locality"]},
-                    {"longText": "Región Metropolitana", "shortText": "RM", "types": ["administrative_area_level_1"]},
-                    {"longText": "7500000", "shortText": "7500000", "types": ["postal_code"]},
-                    {"longText": "Chile", "shortText": "CL", "types": ["country"]},
-                ],
+                "places": [
+                    {
+                        "id": "ChIJ_NEW_PLACE_ID",
+                        "displayName": {"text": "Acme Corp Hotel"},
+                        "formattedAddress": "Av. Providencia 123, Santiago, Chile",
+                        "nationalPhoneNumber": "+56 2 1234 5678",
+                        "websiteUri": "https://acme.cl",
+                        "addressComponents": [
+                            {"longText": "123", "shortText": "123", "types": ["street_number"]},
+                            {"longText": "Av. Providencia", "shortText": "Av. Providencia", "types": ["route"]},
+                            {"longText": "Santiago", "shortText": "Santiago", "types": ["locality"]},
+                            {"longText": "Región Metropolitana", "shortText": "RM", "types": ["administrative_area_level_1"]},
+                            {"longText": "7500000", "shortText": "7500000", "types": ["postal_code"]},
+                            {"longText": "Chile", "shortText": "CL", "types": ["country"]},
+                        ],
+                    }
+                ]
             },
         )
     )
@@ -351,6 +360,13 @@ async def test_enrich_with_id_hotel(client):
     assert result["company_id"] == "12345"
     assert result["status"] == "enriched"
     assert len(result["changes"]) > 0
+
+    # Verify id_hotel is updated to the NEW place_id from text_search
+    patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
+    assert len(patch_calls) == 1
+    body = json.loads(patch_calls[0].request.content)
+    assert body["properties"]["id_hotel"] == "ChIJ_NEW_PLACE_ID"
+    assert body["properties"]["name"] == "Acme Corp Hotel"
 
 
 @respx.mock
@@ -385,6 +401,8 @@ async def test_enrich_with_company_id_in_body(client):
             json={
                 "places": [
                     {
+                        "id": "ChIJ_single_corp",
+                        "displayName": {"text": "Single Corp Hotel"},
                         "formattedAddress": "Av. Javier Prado 456, Lima, Peru",
                         "nationalPhoneNumber": "+51 1 987 6543",
                         "websiteUri": "https://singlecorp.pe",
@@ -468,6 +486,8 @@ async def test_enrich_tripadvisor_failure_still_enriches(client):
             json={
                 "places": [
                     {
+                        "id": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+                        "displayName": {"text": "Acme Corp Hotel"},
                         "formattedAddress": "Av. Providencia 123, Santiago, Chile",
                         "nationalPhoneNumber": "+56 2 1234 5678",
                         "websiteUri": "https://acme.cl",
@@ -511,8 +531,8 @@ async def test_enrich_tripadvisor_failure_still_enriches(client):
 
 
 @respx.mock
-async def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
-    """When id_hotel returns 404, fall back to Google text search."""
+async def test_enrich_id_hotel_ignored_uses_text_search(client):
+    """Even with an invalid id_hotel, enrichment uses text_search (id_hotel is ignored)."""
     respx.post(HUBSPOT_SEARCH_URL).mock(
         return_value=Response(
             200,
@@ -539,18 +559,15 @@ async def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
         )
     )
 
-    # Mock Google Place Details — 404 (invalid ID)
-    respx.get("https://places.googleapis.com/v1/places/INVALID_PLACE_ID").mock(
-        return_value=Response(404, json={"error": {"code": 404, "message": "Place ID no longer valid"}})
-    )
-
-    # Mock Google text search fallback — succeeds
+    # Mock Google text search (no GET details call at all)
     respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(
             200,
             json={
                 "places": [
                     {
+                        "id": "ChIJ_salguero_new",
+                        "displayName": {"text": "Salguero Suites Hotel"},
                         "formattedAddress": "Salguero 1232, Buenos Aires, Argentina",
                         "nationalPhoneNumber": "+54 11 5555 1234",
                         "websiteUri": "https://salguerosuites.com",
@@ -592,6 +609,12 @@ async def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
     result = data["results"][0]
     assert result["status"] == "enriched"
     assert len(result["changes"]) > 0
+
+    # Verify id_hotel was overwritten with the new place_id
+    patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
+    body = json.loads(patch_calls[0].request.content)
+    assert body["properties"]["id_hotel"] == "ChIJ_salguero_new"
+    assert body["properties"]["name"] == "Salguero Suites Hotel"
 
 
 async def test_get_job_nonexistent(client):
@@ -637,6 +660,8 @@ async def test_enrich_does_not_overwrite_existing_tripadvisor_id(client):
             json={
                 "places": [
                     {
+                        "id": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+                        "displayName": {"text": "Acme Corp Hotel"},
                         "formattedAddress": "Av. Providencia 123, Santiago, Chile",
                         "nationalPhoneNumber": "+56 2 1234 5678",
                         "websiteUri": "https://acme.cl",
@@ -709,6 +734,8 @@ async def test_enrich_tripadvisor_failure_no_id_tripadvisor_in_update(client):
             json={
                 "places": [
                     {
+                        "id": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+                        "displayName": {"text": "Acme Corp Hotel"},
                         "formattedAddress": "Av. Providencia 123, Santiago, Chile",
                         "nationalPhoneNumber": "+56 2 1234 5678",
                         "websiteUri": "https://acme.cl",

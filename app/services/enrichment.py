@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from app.exceptions.custom import GooglePlacesError, RateLimitError
+from app.exceptions.custom import RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
 from app.mappers.note_builder import build_enrichment_note, build_error_note
@@ -115,24 +115,10 @@ class EnrichmentService:
     async def _process_company(self, company):
         props = company.properties
 
-        # --- Google Places ---
-        place = None
+        # --- Google Places (always text_search) ---
         query = build_search_query(props.name, props.city, props.country)
-
-        if props.id_hotel and props.id_hotel.strip():
-            place_id = props.id_hotel.strip()
-            logger.info("Looking up Google Place ID: %s", place_id)
-            try:
-                place = await self._google.get_place_details(place_id)
-            except GooglePlacesError as exc:
-                logger.warning(
-                    "Google Place ID %s failed (status=%s), falling back to text search",
-                    place_id, exc.status_code,
-                )
-
-        if place is None:
-            logger.info("Searching Google Places for: %s", query)
-            place = await self._google.text_search(query)
+        logger.info("Searching Google Places for: %s", query)
+        place = await self._google.text_search(query)
 
         # --- TripAdvisor (isolated, never blocks enrichment) ---
         ta_location = None
@@ -210,6 +196,12 @@ class EnrichmentService:
             )
             updates.update(google_updates)
             changes.extend(google_changes)
+
+            # Always write place_id and display name (no smart merge)
+            if place.id:
+                updates["id_hotel"] = place.id
+            if place.displayName and place.displayName.text:
+                updates["name"] = place.displayName.text
 
         # Normalize company phone to E.164
         if "phone" in updates:

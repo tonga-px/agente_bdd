@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from app.mappers.note_builder import build_enrichment_note, build_error_note
-from app.schemas.google_places import GooglePlace
+from app.schemas.google_places import DisplayName, GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
 
@@ -76,6 +76,16 @@ def test_full_google_and_tripadvisor():
     assert "+542614051900" in result
     assert "info@diplomatic.com" in result
     assert "Ver en TripAdvisor" in result
+
+
+def test_google_display_name_in_note():
+    place = GooglePlace(
+        displayName=DisplayName(text="Hotel Diplomatic"),
+        formattedAddress="Av. Belgrano 1041",
+    )
+    result = build_enrichment_note("Test Hotel", place, None)
+    assert "Google Places" in result
+    assert "<strong>Nombre:</strong> Hotel Diplomatic" in result
 
 
 def test_google_only():

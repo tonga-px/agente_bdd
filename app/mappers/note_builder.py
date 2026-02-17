@@ -28,6 +28,12 @@ _BUSINESS_STATUS_MAP = {
 def _format_google_section(place: GooglePlace) -> str | None:
     rows: list[str] = []
 
+    # Display name
+    if place.displayName and place.displayName.text:
+        rows.append(
+            f"<li><strong>Nombre:</strong> {escape(place.displayName.text)}</li>"
+        )
+
     # Rating + reviews
     if place.rating is not None:
         rating_text = f"\u2b50 {place.rating}/5"

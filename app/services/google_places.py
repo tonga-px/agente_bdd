@@ -11,6 +11,8 @@ SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 DETAILS_URL = "https://places.googleapis.com/v1/places"
 
 FIELD_MASK = (
+    "places.id,"
+    "places.displayName,"
     "places.formattedAddress,"
     "places.nationalPhoneNumber,"
     "places.internationalPhoneNumber,"
@@ -25,6 +27,8 @@ FIELD_MASK = (
 )
 
 DETAILS_FIELD_MASK = (
+    "id,"
+    "displayName,"
     "formattedAddress,"
     "nationalPhoneNumber,"
     "internationalPhoneNumber,"

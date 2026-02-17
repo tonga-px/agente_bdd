@@ -30,6 +30,8 @@ async def test_get_place_details_success():
         return_value=Response(
             200,
             json={
+                "id": PLACE_ID,
+                "displayName": {"text": "Acme Corp Hotel"},
                 "formattedAddress": "Av. Providencia 123, Santiago, Chile",
                 "nationalPhoneNumber": "+56 2 1234 5678",
                 "websiteUri": "https://acme.cl",
@@ -50,6 +52,9 @@ async def test_get_place_details_success():
         place = await service.get_place_details(PLACE_ID)
 
     assert place is not None
+    assert place.id == PLACE_ID
+    assert place.displayName is not None
+    assert place.displayName.text == "Acme Corp Hotel"
     assert place.formattedAddress == "Av. Providencia 123, Santiago, Chile"
     assert place.nationalPhoneNumber == "+56 2 1234 5678"
     assert place.websiteUri == "https://acme.cl"
