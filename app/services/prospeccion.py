@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL = 5  # seconds
 POLL_TIMEOUT = 300  # seconds
 TERMINAL_STATUSES = {"done", "failed"}
+SIP_BUSY_RETRY_DELAY = 10  # seconds
+SIP_BUSY_CODE = "486"
 
 
 def _fix_encoding(text: str) -> str:
@@ -217,6 +219,17 @@ class ProspeccionService:
         for phone, source in phone_list:
             attempt = await self._try_call(phone, source, dynamic_vars)
             call_attempts.append(attempt)
+
+            # Retry once on SIP 486 (Busy Here) after a delay
+            if (
+                attempt.status == "failed"
+                and attempt.error
+                and SIP_BUSY_CODE in attempt.error
+            ):
+                logger.info("SIP 486 on %s, retrying in %ds", phone, SIP_BUSY_RETRY_DELAY)
+                await asyncio.sleep(SIP_BUSY_RETRY_DELAY)
+                attempt = await self._try_call(phone, source, dynamic_vars)
+                call_attempts.append(attempt)
 
             if attempt.status == "connected" and attempt.conversation_id:
                 successful_conversation = await self._fetch_with_analysis(
