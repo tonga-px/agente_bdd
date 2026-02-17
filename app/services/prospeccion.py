@@ -390,7 +390,7 @@ class ProspeccionService:
                 )
 
         except Exception as exc:
-            logger.warning("Call to %s failed: %s", phone, exc)
+            logger.warning("Call to %s failed: %s: %s", phone, type(exc).__name__, exc)
             return CallAttempt(
                 phone_number=phone,
                 source=source,

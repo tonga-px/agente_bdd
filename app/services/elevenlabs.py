@@ -45,6 +45,10 @@ class ElevenLabsService:
         if resp.status_code == 429:
             raise RateLimitError("ElevenLabs")
         if resp.status_code >= 400:
+            logger.warning(
+                "ElevenLabs outbound call failed: status=%d body=%s",
+                resp.status_code, resp.text,
+            )
             raise ElevenLabsError(resp.text, status_code=resp.status_code)
 
         data = resp.json()
