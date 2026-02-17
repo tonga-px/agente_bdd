@@ -20,6 +20,7 @@ POLL_TIMEOUT = 300  # seconds
 TERMINAL_STATUSES = {"done", "failed"}
 SIP_BUSY_RETRY_DELAY = 10  # seconds
 SIP_BUSY_CODE = "486"
+SIP_BUSY_MAX_RETRIES = 2  # up to 3 total attempts (1 initial + 2 retries)
 
 
 def _fix_encoding(text: str) -> str:
@@ -220,13 +221,15 @@ class ProspeccionService:
             attempt = await self._try_call(phone, source, dynamic_vars)
             call_attempts.append(attempt)
 
-            # Retry once on SIP 486 (Busy Here) after a delay
-            if (
-                attempt.status == "failed"
-                and attempt.error
-                and SIP_BUSY_CODE in attempt.error
-            ):
-                logger.info("SIP 486 on %s, retrying in %ds", phone, SIP_BUSY_RETRY_DELAY)
+            # Retry on SIP 486 (Busy Here) up to SIP_BUSY_MAX_RETRIES times
+            for _retry in range(SIP_BUSY_MAX_RETRIES):
+                if not (
+                    attempt.status == "failed"
+                    and attempt.error
+                    and SIP_BUSY_CODE in attempt.error
+                ):
+                    break
+                logger.info("SIP 486 on %s, retry %d in %ds", phone, _retry + 1, SIP_BUSY_RETRY_DELAY)
                 await asyncio.sleep(SIP_BUSY_RETRY_DELAY)
                 attempt = await self._try_call(phone, source, dynamic_vars)
                 call_attempts.append(attempt)

@@ -366,7 +366,7 @@ async def test_sip_486_retry_succeeds():
 
 @pytest.mark.asyncio
 async def test_sip_486_retry_also_fails():
-    """SIP 486 retry also fails — no infinite loop, moves on."""
+    """SIP 486 retries all fail — max 3 attempts then moves on."""
     hubspot = AsyncMock(spec=HubSpotService)
     elevenlabs = AsyncMock(spec=ElevenLabsService)
 
@@ -376,7 +376,7 @@ async def test_sip_486_retry_also_fails():
     hubspot.get_associated_emails.return_value = []
     hubspot.get_associated_contacts.return_value = []
 
-    # Both attempts: SIP 486
+    # All attempts: SIP 486
     elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
         success=False, conversation_id="c-busy", message="SIP 486: Busy Here"
     )
@@ -387,8 +387,42 @@ async def test_sip_486_retry_also_fails():
         result = await service.run(company_id="C1")
 
     assert result.status == "all_failed"
-    assert len(result.call_attempts) == 2
+    assert len(result.call_attempts) == 3  # 1 initial + 2 retries
     assert all("486" in a.error for a in result.call_attempts)
+
+
+@pytest.mark.asyncio
+async def test_sip_486_third_attempt_succeeds():
+    """SIP 486 twice, third attempt connects."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company(phone="+56 1 1111")
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = []
+
+    elevenlabs.start_outbound_call.side_effect = [
+        OutboundCallResponse(success=False, conversation_id="c-1", message="SIP 486: Busy Here"),
+        OutboundCallResponse(success=False, conversation_id="c-2", message="SIP 486: Busy Here"),
+        OutboundCallResponse(success=True, conversation_id="conv-1"),
+    ]
+
+    done_conv = _done_conversation()
+    elevenlabs.get_conversation.side_effect = [done_conv, done_conv]
+
+    service = ProspeccionService(hubspot, elevenlabs)
+
+    with patch("app.services.prospeccion.POLL_INTERVAL", 0), \
+         patch("app.services.prospeccion.SIP_BUSY_RETRY_DELAY", 0):
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    assert len(result.call_attempts) == 3
+    assert result.call_attempts[0].status == "failed"
+    assert result.call_attempts[1].status == "failed"
+    assert result.call_attempts[2].status == "connected"
 
 
 @pytest.mark.asyncio
