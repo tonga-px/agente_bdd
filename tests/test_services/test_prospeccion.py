@@ -304,6 +304,33 @@ async def test_deduplicate_phones():
 
 
 @pytest.mark.asyncio
+async def test_deduplicate_phones_ignores_formatting():
+    """Same digits with different formatting should be deduplicated."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company(phone="+56323203958")
+    contact = _make_contact(phone="+56 32 320 3958", mobile="+56 9 8888")
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = [contact]
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=False, message="No answer"
+    )
+
+    service = ProspeccionService(hubspot, elevenlabs)
+    result = await service.run(company_id="C1")
+
+    # +56323203958 and +56 32 320 3958 are the same number — only 2 attempts
+    assert len(result.call_attempts) == 2
+    phones = [a.phone_number for a in result.call_attempts]
+    assert "+56323203958" in phones
+    assert "+56 9 8888" in phones
+
+
+@pytest.mark.asyncio
 async def test_note_failure_doesnt_block():
     """Note creation failure doesn't change status to error."""
     hubspot = AsyncMock(spec=HubSpotService)

@@ -305,25 +305,24 @@ class ProspeccionService:
         seen: set[str] = set()
         phones: list[tuple[str, str]] = []
 
+        def _add(phone_raw: str, source: str) -> None:
+            phone = _normalize_phone(phone_raw)
+            digits = re.sub(r"\D", "", phone)
+            if digits not in seen:
+                seen.add(digits)
+                phones.append((phone, source))
+
         # Company phone first
         if company.properties.phone and company.properties.phone.strip():
-            phone = _normalize_phone(company.properties.phone)
-            seen.add(phone)
-            phones.append((phone, "company"))
+            _add(company.properties.phone, "company")
 
         # Then contact phones
         for contact in contacts:
             props = contact.properties
             if props.phone and props.phone.strip():
-                phone = _normalize_phone(props.phone)
-                if phone not in seen:
-                    seen.add(phone)
-                    phones.append((phone, f"contact:{contact.id}:phone"))
+                _add(props.phone, f"contact:{contact.id}:phone")
             if props.mobilephone and props.mobilephone.strip():
-                phone = _normalize_phone(props.mobilephone)
-                if phone not in seen:
-                    seen.add(phone)
-                    phones.append((phone, f"contact:{contact.id}:mobile"))
+                _add(props.mobilephone, f"contact:{contact.id}:mobile")
 
         return phones
 
