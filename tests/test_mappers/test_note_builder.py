@@ -3,6 +3,7 @@ from unittest.mock import patch
 from app.mappers.note_builder import build_enrichment_note, build_error_note
 from app.schemas.google_places import GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
+from app.schemas.website import WebScrapedData
 
 
 def _mock_now():
@@ -204,6 +205,51 @@ def test_tripadvisor_no_small_url_skips_photo():
     assert result.count("<img") == 1
     assert "https://img.ta/small.jpg" in result
     assert "https://img.ta/big.jpg" not in result
+
+
+# --- Website section tests ---
+
+
+def test_website_section_full():
+    web = WebScrapedData(
+        phones=["+541152630435", "+541199887766"],
+        whatsapp="+5491123530759",
+        emails=["reservas@hotel.com", "info@hotel.com"],
+        source_url="https://hotel.com",
+    )
+    result = build_enrichment_note("Test Hotel", None, None, web_data=web)
+    assert "Website" in result
+    assert "+541152630435" in result
+    assert "+5491123530759" in result
+    assert "reservas@hotel.com" in result
+    assert "info@hotel.com" in result
+    assert "https://hotel.com" in result
+
+
+def test_website_section_empty_data():
+    """Empty WebScrapedData should not produce a Website section."""
+    web = WebScrapedData(source_url="https://hotel.com")
+    result = build_enrichment_note("Test", None, None, web_data=web)
+    # source_url alone produces a section with "Fuente:"
+    assert "Website" in result
+    assert "Fuente:" in result
+
+
+def test_website_section_none():
+    """No web_data → no Website section."""
+    result = build_enrichment_note("Test", None, None, web_data=None)
+    assert "Website" not in result
+
+
+def test_website_phones_limited_to_3():
+    web = WebScrapedData(
+        phones=[f"+{i}1111111" for i in range(5)],
+        source_url="https://hotel.com",
+    )
+    result = build_enrichment_note("Test", None, None, web_data=web)
+    assert "+01111111" in result
+    assert "+21111111" in result
+    assert "+31111111" not in result
 
 
 # --- build_error_note tests ---

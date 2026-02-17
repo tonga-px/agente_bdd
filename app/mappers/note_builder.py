@@ -3,6 +3,7 @@ from html import escape
 
 from app.schemas.google_places import GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
+from app.schemas.website import WebScrapedData
 
 _PRICE_LEVEL_MAP = {
     "PRICE_LEVEL_INEXPENSIVE": "\U0001f4b0",
@@ -201,6 +202,33 @@ def _format_tripadvisor_photos(photos: list[TripAdvisorPhoto]) -> str | None:
     return f'<h3>Fotos TripAdvisor</h3><table>{"".join(rows)}</table>'
 
 
+def _format_website_section(web_data: WebScrapedData) -> str | None:
+    rows: list[str] = []
+
+    # Phones (max 3)
+    if web_data.phones:
+        phones_str = ", ".join(escape(p) for p in web_data.phones[:3])
+        rows.append(f"<li><strong>Telefonos:</strong> {phones_str}</li>")
+
+    # WhatsApp
+    if web_data.whatsapp:
+        rows.append(f"<li><strong>WhatsApp:</strong> {escape(web_data.whatsapp)}</li>")
+
+    # Emails (max 3)
+    if web_data.emails:
+        emails_str = ", ".join(escape(e) for e in web_data.emails[:3])
+        rows.append(f"<li><strong>Emails:</strong> {emails_str}</li>")
+
+    # Source URL
+    if web_data.source_url:
+        url = escape(web_data.source_url)
+        rows.append(f'<li><strong>Fuente:</strong> <a href="{url}">{url}</a></li>')
+
+    if not rows:
+        return None
+    return f"<h3>Website</h3><ul>{''.join(rows)}</ul>"
+
+
 def build_error_note(
     agent_name: str,
     company_name: str | None,
@@ -223,6 +251,7 @@ def build_enrichment_note(
     place: GooglePlace | None,
     ta_location: TripAdvisorLocation | None,
     ta_photos: list[TripAdvisorPhoto] | None = None,
+    web_data: WebScrapedData | None = None,
 ) -> str:
     """Build an HTML enrichment summary for a HubSpot note."""
     title = escape(company_name or "Empresa")
@@ -246,6 +275,11 @@ def build_enrichment_note(
         photos_section = _format_tripadvisor_photos(ta_photos)
         if photos_section:
             parts.append(photos_section)
+
+    if web_data:
+        web_section = _format_website_section(web_data)
+        if web_section:
+            parts.append(web_section)
 
     if not place and not ta_location:
         parts.append("<p>No se encontraron datos en ninguna fuente.</p>")

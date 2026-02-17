@@ -29,6 +29,7 @@ from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
 from app.services.prospeccion import ProspeccionService
 from app.services.tripadvisor import TripAdvisorService
+from app.services.website_scraper import WebsiteScraperService
 
 
 @asynccontextmanager
@@ -50,8 +51,11 @@ async def lifespan(app: FastAPI):
         if settings.tripadvisor_api_key:
             tripadvisor = TripAdvisorService(client, settings.tripadvisor_api_key)
 
+        website_scraper = WebsiteScraperService(client)
         enrichment = EnrichmentService(
-            hubspot, google_places, tripadvisor=tripadvisor, overwrite=settings.overwrite_existing
+            hubspot, google_places, tripadvisor=tripadvisor,
+            website_scraper=website_scraper,
+            overwrite=settings.overwrite_existing,
         )
 
         app.state.enrichment_service = enrichment

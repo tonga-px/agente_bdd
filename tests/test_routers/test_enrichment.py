@@ -16,6 +16,17 @@ TA_DETAILS_URL = "https://api.content.tripadvisor.com/api/v1/location/999/detail
 TA_PHOTOS_URL = "https://api.content.tripadvisor.com/api/v1/location/{location_id}/photos"
 
 
+def _mock_website(url="https://acme.cl"):
+    """Mock website scraping — return empty HTML (no contacts)."""
+    respx.get(url).mock(
+        return_value=Response(
+            200,
+            html="<html><body><p>Hotel website</p></body></html>",
+            headers={"content-type": "text/html"},
+        )
+    )
+
+
 def _mock_ta_search(location_id="999", name="Acme Corp"):
     """Mock TripAdvisor search returning one result."""
     respx.get(TA_SEARCH_URL).mock(
@@ -172,6 +183,9 @@ async def test_enrich_full_flow(client):
     _mock_ta_details()
     _mock_ta_photos()
 
+    # Mock website
+    _mock_website("https://acme.cl")
+
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
 
@@ -316,6 +330,9 @@ async def test_enrich_with_id_hotel(client):
     _mock_ta_details()
     _mock_ta_photos()
 
+    # Mock website
+    _mock_website("https://acme.cl")
+
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
 
@@ -389,6 +406,9 @@ async def test_enrich_with_company_id_in_body(client):
     _mock_ta_search(name="Single Corp")
     _mock_ta_details()
     _mock_ta_photos()
+
+    # Mock website
+    _mock_website("https://singlecorp.pe")
 
     # Mock HubSpot update
     respx.patch("https://api.hubapi.com/crm/v3/objects/companies/67890").mock(
@@ -470,6 +490,9 @@ async def test_enrich_tripadvisor_failure_still_enriches(client):
         return_value=Response(500, text="Internal Server Error")
     )
 
+    # Mock website
+    _mock_website("https://acme.cl")
+
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
 
@@ -550,6 +573,9 @@ async def test_enrich_invalid_id_hotel_falls_back_to_text_search(client):
     _mock_ta_details()
     _mock_ta_photos()
 
+    # Mock website
+    _mock_website("https://salguerosuites.com")
+
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
 
@@ -628,6 +654,9 @@ async def test_enrich_does_not_overwrite_existing_tripadvisor_id(client):
     _mock_ta_details(location_id="888")
     _mock_ta_photos(location_id="888")
 
+    # Mock website
+    _mock_website("https://acme.cl")
+
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
 
@@ -697,6 +726,9 @@ async def test_enrich_tripadvisor_failure_no_id_tripadvisor_in_update(client):
     respx.get(TA_SEARCH_URL).mock(
         return_value=Response(500, text="Internal Server Error")
     )
+
+    # Mock website
+    _mock_website("https://acme.cl")
 
     # Mock HubSpot update
     respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))

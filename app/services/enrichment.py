@@ -10,7 +10,9 @@ from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
 from app.schemas.google_places import GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation
+from app.schemas.website import WebScrapedData
 from app.services.tripadvisor import TripAdvisorService, clean_name
+from app.services.website_scraper import WebsiteScraperService
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +32,13 @@ class EnrichmentService:
         hubspot: HubSpotService,
         google_places: GooglePlacesService,
         tripadvisor: TripAdvisorService | None = None,
+        website_scraper: WebsiteScraperService | None = None,
         overwrite: bool = False,
     ):
         self._hubspot = hubspot
         self._google = google_places
         self._tripadvisor = tripadvisor
+        self._website_scraper = website_scraper
         self._overwrite = overwrite
 
     async def run(self, company_id: str | None = None) -> EnrichmentResponse:
@@ -169,6 +173,23 @@ class EnrichmentService:
                         company.id,
                     )
 
+        # --- Website scraping (isolated, never blocks enrichment) ---
+        web_data: WebScrapedData | None = None
+        if self._website_scraper:
+            website_url = None
+            if place and place.websiteUri:
+                website_url = place.websiteUri
+            elif props.website and props.website.strip():
+                website_url = props.website.strip()
+            if website_url:
+                try:
+                    web_data = await self._website_scraper.scrape(website_url)
+                except Exception:
+                    logger.exception(
+                        "Website scrape failed for company %s, continuing without it",
+                        company.id,
+                    )
+
         # --- Merge results ---
         if place is None and ta_location is None:
             await self._hubspot.update_company(company.id, {"agente": ""})
@@ -198,6 +219,11 @@ class EnrichmentService:
             if normalized != props.phone:
                 updates["phone"] = normalized
 
+        # Fill company phone from web scrape if still empty
+        if "phone" not in updates and not (props.phone and props.phone.strip()):
+            if web_data and web_data.phones:
+                updates["phone"] = web_data.phones[0]
+
         if ta_location and ta_location.location_id:
             if self._overwrite or not (props.id_tripadvisor and props.id_tripadvisor.strip()):
                 updates["id_tripadvisor"] = ta_location.location_id
@@ -208,7 +234,9 @@ class EnrichmentService:
         await self._hubspot.update_company(company.id, updates)
 
         # --- Create enrichment note ---
-        note_body = build_enrichment_note(props.name, place, ta_location, ta_photos=ta_photos)
+        note_body = build_enrichment_note(
+            props.name, place, ta_location, ta_photos=ta_photos, web_data=web_data,
+        )
         try:
             await self._hubspot.create_note(company.id, note_body)
         except Exception:
@@ -217,8 +245,8 @@ class EnrichmentService:
                 company.id,
             )
 
-        # --- Create contacts from phone numbers (best-effort) ---
-        await self._create_phone_contacts(company.id, props.name, place, ta_location)
+        # --- Create contacts from phone numbers and web data (best-effort) ---
+        await self._create_contacts(company.id, props.name, place, ta_location, web_data)
 
         return CompanyResult(
             company_id=company.id,
@@ -228,21 +256,24 @@ class EnrichmentService:
             note=note_body,
         )
 
-    async def _create_phone_contacts(
+    async def _create_contacts(
         self,
         company_id: str,
         company_name: str | None,
         place: GooglePlace | None,
         ta_location: TripAdvisorLocation | None,
+        web_data: WebScrapedData | None = None,
     ) -> None:
-        """Create a contact for TripAdvisor phone if it differs from Google's (best-effort).
+        """Create contacts from TripAdvisor and website data (best-effort).
 
-        The Google phone is already on the company field, so we only create a
-        contact when TripAdvisor provides a *different* phone number.
+        The Google phone is already on the company field, so we only create
+        contacts for *different* phones or web-scraped emails.
         """
         try:
             def _digits(p: str) -> str:
                 return "".join(ch for ch in p if ch.isdigit())
+
+            name = company_name or "Hotel"
 
             # Get Google E.164 phone (for comparison)
             google_phone = ""
@@ -251,50 +282,101 @@ class EnrichmentService:
                 if raw and raw.strip():
                     google_phone = _normalize_phone(raw)
 
-            # Get TripAdvisor E.164 phone
+            # Track all known phones (digits) to avoid cross-source dupes
+            all_known: set[str] = set()
+            if google_phone:
+                all_known.add(_digits(google_phone))
+
+            # Check existing contacts
+            need_existing = False
             ta_phone = ""
             if ta_location and ta_location.phone and ta_location.phone.strip():
                 ta_phone = _normalize_phone(ta_location.phone)
+                if ta_phone and _digits(ta_phone) not in all_known:
+                    need_existing = True
 
-            if not ta_phone:
-                return
+            has_web_data = web_data and (web_data.phones or web_data.emails)
+            if has_web_data:
+                need_existing = True
 
-            # Skip if same digits as Google phone
-            if google_phone and _digits(ta_phone) == _digits(google_phone):
-                logger.info(
-                    "TripAdvisor phone %s same as Google phone, skipping contact",
-                    ta_phone,
-                )
-                return
-
-            # Check existing contacts to avoid duplicates
-            existing_contacts = await self._hubspot.get_associated_contacts(company_id)
             existing_phones: set[str] = set()
-            for c in existing_contacts:
-                for field in (c.properties.phone, c.properties.mobilephone):
-                    if field and field.strip():
-                        existing_phones.add(_digits(field))
+            existing_emails: set[str] = set()
+            if need_existing:
+                existing_contacts = await self._hubspot.get_associated_contacts(company_id)
+                for c in existing_contacts:
+                    for field in (c.properties.phone, c.properties.mobilephone):
+                        if field and field.strip():
+                            existing_phones.add(_digits(field))
+                    if c.properties.email and c.properties.email.strip():
+                        existing_emails.add(c.properties.email.strip().lower())
 
-            if _digits(ta_phone) in existing_phones:
+            all_known.update(existing_phones)
+
+            # --- TripAdvisor phone contact ---
+            if ta_phone and _digits(ta_phone) not in all_known:
+                contact_props = {
+                    "firstname": f"Recepcion {name}",
+                    "lastname": "/ TripAdvisor",
+                    "phone": ta_phone,
+                }
+                await self._hubspot.create_contact(company_id, contact_props)
+                all_known.add(_digits(ta_phone))
                 logger.info(
-                    "Phone %s already exists in contacts for company %s, skipping",
+                    "Created TripAdvisor phone contact (%s) for company %s",
                     ta_phone, company_id,
                 )
-                return
 
-            name = company_name or "Hotel"
-            props = {
-                "firstname": f"Recepcion {name}",
-                "lastname": "/ TripAdvisor",
-                "phone": ta_phone,
-            }
-            await self._hubspot.create_contact(company_id, props)
-            logger.info(
-                "Created TripAdvisor phone contact (%s) for company %s",
-                ta_phone, company_id,
-            )
+            # --- Website contacts ---
+            if web_data:
+                # Find first unique web phone
+                web_phone = ""
+                for p in (web_data.phones or []):
+                    if _digits(p) not in all_known:
+                        web_phone = p
+                        break
+
+                web_whatsapp = web_data.whatsapp or ""
+                # Find first unique web email
+                web_email = ""
+                for e in (web_data.emails or []):
+                    if e.lower() not in existing_emails:
+                        web_email = e
+                        break
+
+                if web_email:
+                    contact_props = {
+                        "firstname": f"Recepcion {name}",
+                        "lastname": "/ Website",
+                        "email": web_email,
+                    }
+                    if web_phone:
+                        contact_props["phone"] = web_phone
+                    if web_whatsapp:
+                        contact_props["mobilephone"] = web_whatsapp
+                    await self._hubspot.create_contact(company_id, contact_props)
+                    if web_phone:
+                        all_known.add(_digits(web_phone))
+                    logger.info(
+                        "Created website email contact (%s) for company %s",
+                        web_email, company_id,
+                    )
+                elif web_phone:
+                    contact_props = {
+                        "firstname": f"Recepcion {name}",
+                        "lastname": "/ Website",
+                        "phone": web_phone,
+                    }
+                    if web_whatsapp:
+                        contact_props["mobilephone"] = web_whatsapp
+                    await self._hubspot.create_contact(company_id, contact_props)
+                    all_known.add(_digits(web_phone))
+                    logger.info(
+                        "Created website phone contact (%s) for company %s",
+                        web_phone, company_id,
+                    )
+
         except Exception:
             logger.exception(
-                "Failed to create phone contacts for company %s, enrichment still succeeded",
+                "Failed to create contacts for company %s, enrichment still succeeded",
                 company_id,
             )
