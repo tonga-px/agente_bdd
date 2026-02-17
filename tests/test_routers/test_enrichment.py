@@ -775,6 +775,36 @@ async def test_enrich_tripadvisor_failure_no_id_tripadvisor_in_update(client):
 
 
 @respx.mock
+async def test_enrich_duplicate_rejected(client):
+    """Second enrichment request for the same company is rejected while first is running."""
+    # Mock GET company to succeed, then Google Places hangs to keep job running
+    respx.get(HUBSPOT_COMPANY_URL).mock(
+        return_value=Response(200, json={
+            "id": "12345",
+            "properties": {"name": "Acme Corp", "city": "Santiago", "country": "Chile", "agente": "datos"},
+        })
+    )
+
+    async def _slow_google(request):
+        await asyncio.sleep(5)
+        return Response(200, json={"places": []})
+
+    respx.post(GOOGLE_PLACES_URL).mock(side_effect=_slow_google)
+    _mock_ta_empty()
+
+    # First request — accepted
+    resp1 = await client.post("/datos", json={"company_id": "12345"})
+    assert resp1.status_code == 202
+
+    await asyncio.sleep(0.1)
+
+    # Second request — rejected
+    resp2 = await client.post("/datos", json={"company_id": "12345"})
+    assert resp2.status_code == 409
+    assert "Ya existe un job activo" in resp2.json()["detail"]
+
+
+@respx.mock
 async def test_sync_endpoint(client):
     """POST /datos/sync still works synchronously for backward compat."""
     respx.post(HUBSPOT_SEARCH_URL).mock(

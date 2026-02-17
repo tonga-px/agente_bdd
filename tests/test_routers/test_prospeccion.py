@@ -153,6 +153,32 @@ async def test_prospeccion_no_phone(client):
 
 
 @respx.mock
+async def test_prospeccion_duplicate_rejected(client):
+    """Second request for the same company is rejected while first is running."""
+    _mock_company()
+    _mock_empty_associations()
+    # Slow call — keeps the job running
+    respx.post(ELEVENLABS_OUTBOUND).mock(side_effect=lambda _: Response(
+        200, json={"success": True, "conversation_id": "conv-1"},
+    ))
+    respx.get(ELEVENLABS_CONVERSATION).mock(
+        return_value=Response(200, json={"conversation_id": "conv-1", "status": "processing"}),
+    )
+
+    # First request — accepted
+    resp1 = await client.post("/llamada_prospeccion", json={"company_id": "C1"})
+    assert resp1.status_code == 202
+
+    # Wait a bit for job to start running
+    await asyncio.sleep(0.1)
+
+    # Second request — rejected
+    resp2 = await client.post("/llamada_prospeccion", json={"company_id": "C1"})
+    assert resp2.status_code == 409
+    assert "Ya existe un job activo" in resp2.json()["detail"]
+
+
+@respx.mock
 async def test_prospeccion_503_without_config(client, monkeypatch):
     """If ElevenLabs is not configured, endpoint returns 503."""
     # Set prospeccion_service to None to simulate no config

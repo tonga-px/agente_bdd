@@ -43,7 +43,15 @@ async def llamada_prospeccion(
         raise HTTPException(status_code=503, detail="ElevenLabs not configured")
 
     company_id = request.company_id if request else None
-    job = store.create_job(company_id=company_id)
+
+    existing = store.has_active_job("prospeccion", company_id)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ya existe un job activo para esta tarea (job_id={existing.job_id})",
+        )
+
+    job = store.create_job(company_id=company_id, task_type="prospeccion")
     asyncio.create_task(_run_prospeccion(job.job_id, service, store, company_id))
     return JobSubmittedResponse(
         job_id=job.job_id,

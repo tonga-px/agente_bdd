@@ -21,6 +21,7 @@ class JobStatus(StrEnum):
 class Job(BaseModel):
     job_id: str
     status: JobStatus
+    task_type: str = ""  # "enrichment" or "prospeccion"
     created_at: datetime
     finished_at: datetime | None = None
     company_id: str | None = None
@@ -44,16 +45,25 @@ class JobStore:
         while len(self._jobs) > self._max_jobs and candidates:
             self._jobs.pop(candidates.pop(0).job_id, None)
 
-    def create_job(self, company_id: str | None = None) -> Job:
+    def create_job(self, company_id: str | None = None, task_type: str = "") -> Job:
         job = Job(
             job_id=uuid.uuid4().hex[:12],
             status=JobStatus.pending,
+            task_type=task_type,
             created_at=datetime.now(timezone.utc),
             company_id=company_id,
         )
         self._jobs[job.job_id] = job
         self._evict()
         return job
+
+    def has_active_job(self, task_type: str, company_id: str | None = None) -> Job | None:
+        """Return an active (pending/running) job for the same task+company, if any."""
+        active = (JobStatus.pending, JobStatus.running)
+        for job in self._jobs.values():
+            if job.task_type == task_type and job.status in active and job.company_id == company_id:
+                return job
+        return None
 
     def get_job(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
