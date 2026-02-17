@@ -77,6 +77,10 @@ class EnrichmentService:
                     )
                 )
                 try:
+                    await self._hubspot.update_company(company.id, {"agente": ""})
+                except Exception:
+                    logger.exception("Failed to clear agente for company %s", company.id)
+                try:
                     note = build_error_note("Datos", company.properties.name, "error", error_msg)
                     await self._hubspot.create_note(company.id, note)
                 except Exception:
@@ -96,6 +100,10 @@ class EnrichmentService:
                     )
                 )
                 try:
+                    await self._hubspot.update_company(company.id, {"agente": ""})
+                except Exception:
+                    logger.exception("Failed to clear agente for company %s", company.id)
+                try:
                     note = build_error_note("Datos", company.properties.name, "error", error_msg)
                     await self._hubspot.create_note(company.id, note)
                 except Exception:
@@ -114,6 +122,12 @@ class EnrichmentService:
 
     async def _process_company(self, company):
         props = company.properties
+
+        # Mark as "pendiente" immediately so it won't be picked up again
+        try:
+            await self._hubspot.update_company(company.id, {"agente": "pendiente"})
+        except Exception:
+            logger.warning("Failed to set agente=pendiente for company %s", company.id)
 
         # --- Google Places (always text_search) ---
         query = build_search_query(props.name, props.city, props.country)

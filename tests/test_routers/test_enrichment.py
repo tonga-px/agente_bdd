@@ -188,7 +188,7 @@ async def test_enrich_full_flow(client):
     _mock_website("https://acme.cl")
 
     # Mock HubSpot update
-    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+    respx.patch(HUBSPOT_COMPANY_URL).mock(side_effect=lambda req: Response(200, json={}))
 
     # Mock notes
     _mock_notes()
@@ -210,8 +210,8 @@ async def test_enrich_full_flow(client):
 
     # Verify id_tripadvisor, id_hotel, and name were sent to HubSpot
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
-    assert len(patch_calls) == 1
-    body = json.loads(patch_calls[0].request.content)
+    assert len(patch_calls) == 2  # First is "pendiente", second is enrichment
+    body = json.loads(patch_calls[1].request.content)  # Check the enrichment update
     assert body["properties"]["id_tripadvisor"] == "999"
     assert body["properties"]["id_hotel"] == "ChIJN1t_tDeuEmsRUsoyG83frY4"
     assert body["properties"]["name"] == "Acme Corp Hotel"
@@ -343,7 +343,7 @@ async def test_enrich_with_id_hotel_uses_text_search(client):
     _mock_website("https://acme.cl")
 
     # Mock HubSpot update
-    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+    respx.patch(HUBSPOT_COMPANY_URL).mock(side_effect=lambda req: Response(200, json={}))
 
     # Mock notes
     _mock_notes()
@@ -363,8 +363,8 @@ async def test_enrich_with_id_hotel_uses_text_search(client):
 
     # Verify id_hotel is updated to the NEW place_id from text_search
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
-    assert len(patch_calls) == 1
-    body = json.loads(patch_calls[0].request.content)
+    assert len(patch_calls) == 2  # First is "pendiente", second is enrichment
+    body = json.loads(patch_calls[1].request.content)  # Check the enrichment update
     assert body["properties"]["id_hotel"] == "ChIJ_NEW_PLACE_ID"
     assert body["properties"]["name"] == "Acme Corp Hotel"
 
@@ -514,7 +514,7 @@ async def test_enrich_tripadvisor_failure_still_enriches(client):
     _mock_website("https://acme.cl")
 
     # Mock HubSpot update
-    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+    respx.patch(HUBSPOT_COMPANY_URL).mock(side_effect=lambda req: Response(200, json={}))
 
     # Mock notes
     _mock_notes()
@@ -594,7 +594,7 @@ async def test_enrich_id_hotel_ignored_uses_text_search(client):
     _mock_website("https://salguerosuites.com")
 
     # Mock HubSpot update
-    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+    respx.patch(HUBSPOT_COMPANY_URL).mock(side_effect=lambda req: Response(200, json={}))
 
     # Mock notes
     _mock_notes()
@@ -612,7 +612,8 @@ async def test_enrich_id_hotel_ignored_uses_text_search(client):
 
     # Verify id_hotel was overwritten with the new place_id
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
-    body = json.loads(patch_calls[0].request.content)
+    assert len(patch_calls) == 2  # First is "pendiente", second is enrichment
+    body = json.loads(patch_calls[1].request.content)  # Check the enrichment update
     assert body["properties"]["id_hotel"] == "ChIJ_salguero_new"
     assert body["properties"]["name"] == "Salguero Suites Hotel"
 
@@ -683,7 +684,7 @@ async def test_enrich_does_not_overwrite_existing_tripadvisor_id(client):
     _mock_website("https://acme.cl")
 
     # Mock HubSpot update
-    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+    respx.patch(HUBSPOT_COMPANY_URL).mock(side_effect=lambda req: Response(200, json={}))
 
     # Mock notes
     _mock_notes()
@@ -694,8 +695,8 @@ async def test_enrich_does_not_overwrite_existing_tripadvisor_id(client):
 
     # Verify id_tripadvisor was NOT included in the update
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
-    assert len(patch_calls) == 1
-    body = json.loads(patch_calls[0].request.content)
+    assert len(patch_calls) == 2  # First is "pendiente", second is enrichment
+    body = json.loads(patch_calls[1].request.content)  # Check the enrichment update
     assert "id_tripadvisor" not in body["properties"]
 
 
@@ -758,7 +759,7 @@ async def test_enrich_tripadvisor_failure_no_id_tripadvisor_in_update(client):
     _mock_website("https://acme.cl")
 
     # Mock HubSpot update
-    respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+    respx.patch(HUBSPOT_COMPANY_URL).mock(side_effect=lambda req: Response(200, json={}))
 
     # Mock notes
     _mock_notes()
@@ -769,8 +770,8 @@ async def test_enrich_tripadvisor_failure_no_id_tripadvisor_in_update(client):
 
     # Verify id_tripadvisor was NOT included in the update
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
-    assert len(patch_calls) == 1
-    body = json.loads(patch_calls[0].request.content)
+    assert len(patch_calls) == 2  # First is "pendiente", second is enrichment
+    body = json.loads(patch_calls[1].request.content)  # Check the enrichment update
     assert "id_tripadvisor" not in body["properties"]
 
 

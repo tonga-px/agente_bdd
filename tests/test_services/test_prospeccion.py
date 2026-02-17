@@ -120,10 +120,19 @@ async def test_full_flow():
     assert len(result.call_attempts) == 1
     assert result.call_attempts[0].status == "connected"
 
-    # Verify HubSpot was updated (only agente cleared, extracted data goes to note)
-    hubspot.update_company.assert_called_once()
-    update_args = hubspot.update_company.call_args
-    props = update_args[0][1]
+    # Verify HubSpot was updated twice: first with agente=pendiente, then with agente=""
+    assert hubspot.update_company.call_count == 2
+    call_args_list = hubspot.update_company.call_args_list
+    
+    # First call: set agente to pendiente
+    first_call = call_args_list[0]
+    assert first_call[0][0] == "C1"
+    assert first_call[0][1] == {"agente": "pendiente"}
+    
+    # Second call: clear agente and include any other updates
+    second_call = call_args_list[1]
+    assert second_call[0][0] == "C1"
+    props = second_call[0][1]
     assert props["agente"] == ""
 
     # Verify note was created
@@ -146,7 +155,13 @@ async def test_no_phone():
     result = await service.run(company_id="C1")
 
     assert result.status == "no_phone"
-    hubspot.update_company.assert_called_once_with("C1", {"agente": ""})
+    
+    # Verify update_company was called twice: pendiente, then cleared
+    assert hubspot.update_company.call_count == 2
+    call_args_list = hubspot.update_company.call_args_list
+    assert call_args_list[0][0] == ("C1", {"agente": "pendiente"})
+    assert call_args_list[1][0] == ("C1", {"agente": ""})
+    
     elevenlabs.start_outbound_call.assert_not_called()
 
 
@@ -206,7 +221,12 @@ async def test_all_failed():
 
     assert result.status == "all_failed"
     assert len(result.call_attempts) == 1
-    hubspot.update_company.assert_called_once_with("C1", {"agente": ""})
+    
+    # Verify update_company was called twice: pendiente, then cleared
+    assert hubspot.update_company.call_count == 2
+    call_args_list = hubspot.update_company.call_args_list
+    assert call_args_list[0][0] == ("C1", {"agente": "pendiente"})
+    assert call_args_list[1][0] == ("C1", {"agente": ""})
 
 
 @pytest.mark.asyncio

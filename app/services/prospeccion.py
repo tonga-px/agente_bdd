@@ -175,6 +175,12 @@ class ProspeccionService:
     async def _process_company(
         self, company: HubSpotCompany
     ) -> ProspeccionResponse:
+        # Mark as "pendiente" immediately so it won't be picked up again
+        try:
+            await self._hubspot.update_company(company.id, {"agente": "pendiente"})
+        except Exception:
+            logger.warning("Failed to set agente=pendiente for company %s", company.id)
+
         # Fetch context in parallel
         results = await asyncio.gather(
             self._hubspot.get_associated_notes(company.id),
