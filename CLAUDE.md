@@ -11,7 +11,7 @@ pip install -e ".[dev]"
 # Run locally
 uvicorn app.main:app --reload --port 8000
 
-# Tests (173 total)
+# Tests (184 total)
 pytest
 pytest tests/test_services/test_enrichment.py -v          # single file
 pytest tests/test_services/test_enrichment.py::test_name  # single test
@@ -24,15 +24,17 @@ FastAPI async app deployed on Railway. Single web process, no DB, no background 
 
 **Two main flows:**
 
-1. **Enrichment** (`POST /datos` → 202, `POST /datos/sync` → 200): HubSpot search → Google Places text_search → TripAdvisor (optional) → website scraping (optional) → mappers → HubSpot update + note + contacts
-2. **Prospeccion** (`POST /llamada_prospeccion` → 202): HubSpot lookup → build phone list → ElevenLabs outbound call → poll for result → extract data → HubSpot update + note + decision-maker contact + call recording
+1. **Enrichment** (`POST /datos` → 202, `POST /datos/sync` → 200): HubSpot search → set agente="pendiente" → Google Places text_search → TripAdvisor (optional) → website scraping (optional) → mappers → HubSpot update + note + contacts → agente=""
+2. **Prospeccion** (`POST /llamada_prospeccion` → 202): HubSpot lookup → set agente="pendiente" → build phone list → ElevenLabs outbound call → poll for result → extract data → HubSpot update + note + decision-maker contact + call recording → agente=""
 
-Jobs are polled via `GET /jobs/{job_id}`.
+Jobs are polled via `GET /jobs/{job_id}`. Duplicate jobs for the same task+company are rejected with 409.
 
 **Key patterns:**
 
 - **Graceful degradation**: TripAdvisor, website scraping, contact creation, call recording — all wrapped in try/except, failures logged but never block the main flow.
 - **Smart merge**: only fills empty HubSpot fields. Exception: `id_hotel` (place_id) and `name` (displayName) are always force-written from Google Places.
+- **agente lifecycle**: `"datos"`/`"llamada_prospeccion"` → `"pendiente"` (immediately on start) → `""` (on completion or error). Prevents duplicate processing.
+- **Duplicate job protection**: `JobStore.has_active_job(task_type, company_id)` → 409 if a pending/running job exists for the same task+company.
 - **Dependency injection**: services created in `lifespan()`, stored on `app.state`, accessed via `Annotated[XService, Depends()]` in `dependencies.py`.
 - **Shared httpx.AsyncClient**: 30s default timeout; file upload/download uses 120s.
 
@@ -47,7 +49,8 @@ Jobs are polled via `GET /jobs/{job_id}`.
 
 ## Critical conventions
 
-- **Phones**: always normalized to E.164 (`+country digits`) via `_normalize_phone()`
+- **Phones**: always normalized to E.164 (`+country digits`) via `_normalize_phone()`. Deduplication compares digits-only (ignores spaces/formatting).
+- **SIP 486 retry**: Busy Here triggers up to 3 total attempts per number (10s delay). `_describe_error()` maps exceptions to Spanish descriptions.
 - **Google Places**: enrichment always uses `text_search` (never `get_place_details` as primary)
 - **ElevenLabs encoding**: transcript text is double-encoded UTF-8. `_fix_encoding()` uses segment-by-segment approach because text can also contain non-Latin-1 chars (smart quotes, em dashes)
 - **HubSpot associations**: notes→companies = 190, calls→companies = **182** (NOT 220)
