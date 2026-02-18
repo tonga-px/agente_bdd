@@ -32,11 +32,11 @@ _SYSTEM_PROMPT = (
 )
 
 _USER_PROMPT_TEMPLATE = (
-    "Search for the public Instagram profile @{username} "
-    "(https://www.instagram.com/{username}/) and find its contact information. "
-    "What is their display name, biography text, phone numbers, "
-    "email, WhatsApp link, and follower count? "
-    "Return a JSON object with exactly these fields: "
+    'Search for the public Instagram profile @{username} '
+    '(https://www.instagram.com/{username}/){context}. '
+    'What is their display name, biography text, phone numbers, '
+    'email, WhatsApp link, and follower count? '
+    'Return a JSON object with exactly these fields: '
     '"full_name" (profile display name or null), '
     '"biography" (bio text or null), '
     '"external_url" (link in bio or null), '
@@ -44,8 +44,8 @@ _USER_PROMPT_TEMPLATE = (
     '"business_phone" (contact phone or null), '
     '"follower_count" (number of followers as integer, or null), '
     '"whatsapp_url" (any WhatsApp link wa.me/*, wa.link/*, '
-    "api.whatsapp.com/* or null). "
-    "If a field is not available, use null."
+    'api.whatsapp.com/* or null). '
+    'If a field is not available, use null.'
 )
 
 
@@ -123,21 +123,33 @@ class InstagramService:
         self._client = client
         self._api_key = api_key
 
-    async def scrape(self, url: str) -> InstagramData:
+    async def scrape(
+        self,
+        url: str,
+        hotel_name: str | None = None,
+        city: str | None = None,
+    ) -> InstagramData:
         """Scrape an Instagram profile via Perplexity. Never raises."""
         try:
-            return await self._do_scrape(url)
+            return await self._do_scrape(url, hotel_name, city)
         except Exception:
             logger.exception("Instagram scrape failed for %s", url)
             return InstagramData()
 
-    async def _do_scrape(self, url: str) -> InstagramData:
+    async def _do_scrape(
+        self,
+        url: str,
+        hotel_name: str | None = None,
+        city: str | None = None,
+    ) -> InstagramData:
         username = _extract_username(url)
         if not username:
             return InstagramData()
 
         profile_url = f"https://www.instagram.com/{username}/"
-        prompt = _USER_PROMPT_TEMPLATE.format(username=username)
+        context_parts = [p for p in (hotel_name, city) if p]
+        context = f", which belongs to {', '.join(context_parts)}" if context_parts else ""
+        prompt = _USER_PROMPT_TEMPLATE.format(username=username, context=context)
 
         try:
             resp = await self._client.post(

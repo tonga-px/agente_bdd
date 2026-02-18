@@ -259,7 +259,9 @@ class EnrichmentService:
         instagram_data: InstagramData | None = None
         if self._instagram and website_url and is_instagram_url(website_url):
             try:
-                instagram_data = await self._instagram.scrape(website_url)
+                instagram_data = await self._instagram.scrape(
+                    website_url, hotel_name=props.name, city=props.city,
+                )
             except Exception:
                 logger.exception(
                     "Instagram scrape failed for company %s, continuing without it",

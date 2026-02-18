@@ -840,5 +840,8 @@ async def test_instagram_url_triggers_instagram_scrape():
     result = await svc._process_company(company)
 
     assert result.status == "enriched"
-    ig_mock.scrape.assert_awaited_once_with("https://www.instagram.com/hotelitapua/")
+    ig_mock.scrape.assert_awaited_once_with(
+        "https://www.instagram.com/hotelitapua/",
+        hotel_name="Hotel Itapúa", city="Asunción",
+    )
     ws_mock.scrape.assert_not_awaited()  # website scraper not called for IG URLs
