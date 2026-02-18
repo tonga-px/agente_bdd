@@ -219,6 +219,33 @@ def test_normalize_phone_empty():
     assert _normalize_phone("") == ""
 
 
+def test_normalize_phone_rejects_local_zero():
+    """Phone starting with 0 (local, no country code) is rejected."""
+    assert _normalize_phone("0336275307") == ""
+    assert _normalize_phone("+0336275307") == ""
+
+
+def test_normalize_phone_rejects_too_short():
+    """Fewer than 7 digits is rejected."""
+    assert _normalize_phone("12345") == ""
+    assert _normalize_phone("+123456") == ""
+
+
+def test_normalize_phone_rejects_too_long():
+    """More than 15 digits is rejected."""
+    assert _normalize_phone("1234567890123456") == ""
+
+
+def test_normalize_phone_accepts_7_digits():
+    """Exactly 7 digits is accepted."""
+    assert _normalize_phone("5611111") == "+5611111"
+
+
+def test_normalize_phone_accepts_15_digits():
+    """Exactly 15 digits is accepted."""
+    assert _normalize_phone("123456789012345") == "+123456789012345"
+
+
 # --- Web data contact creation tests ---
 
 

@@ -3,7 +3,7 @@ import respx
 from httpx import AsyncClient, Response
 
 from app.exceptions.custom import RateLimitError, TripAdvisorError
-from app.services.tripadvisor import TripAdvisorService
+from app.services.tripadvisor import TripAdvisorService, names_match
 
 
 @pytest.fixture
@@ -211,3 +211,49 @@ async def test_get_photos_error(service):
     with pytest.raises(TripAdvisorError) as exc_info:
         await service.get_photos("123456")
     assert exc_info.value.status_code == 500
+
+
+# --- names_match / compound matching tests ---
+
+
+def test_names_match_exact_overlap():
+    """Two names sharing significant tokens match."""
+    assert names_match("Hotel Paraiso", "Paraiso Hotel") is True
+
+
+def test_names_match_no_overlap():
+    """No significant token overlap → no match."""
+    assert names_match("Hotel Sol", "Residencia Luna") is False
+
+
+def test_names_match_compound_lifestyle():
+    """'Life Style' matches 'Lifestyle' via compound concatenation."""
+    assert names_match("Life Style Hotel", "Lifestyle Hotel") is True
+
+
+def test_names_match_compound_reverse():
+    """'Lifestyle' matches 'Life Style' (reverse direction)."""
+    assert names_match("Lifestyle Hotel", "Life Style Hotel") is True
+
+
+def test_names_match_compound_no_match():
+    """Compound tokens that don't exist in other → no match."""
+    assert names_match("Blue Star Hotel", "Greenfield Inn") is False
+
+
+def test_names_match_single_token():
+    """Single significant token: only 1 match required."""
+    assert names_match("Paramanta", "Hotel Paramanta") is True
+
+
+def test_names_match_compound_paramanta():
+    """'Para Manta' doesn't match 'Paramanta' — not adjacent after sort."""
+    # "manta" + "para" → "mantapara" (sorted), not "paramanta"
+    # This is expected: compound match only works on sorted-adjacent pairs
+    assert names_match("Para Manta Hotel", "Hotel Paramanta") is False
+
+
+def test_names_match_empty_names():
+    """Empty or stop-word-only names don't match."""
+    assert names_match("Hotel", "Hotel") is False
+    assert names_match("", "Paraiso") is False

@@ -6,3 +6,4 @@ class WebScrapedData(BaseModel):
     whatsapp: str | None = None  # E.164
     emails: list[str] = []  # preference-ranked
     source_url: str | None = None
+    raw_html: str | None = None  # preserved for downstream scrapers (e.g. Booking)

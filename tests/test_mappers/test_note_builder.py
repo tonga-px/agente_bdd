@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from app.mappers.note_builder import build_enrichment_note, build_error_note
+from app.schemas.booking import BookingData
 from app.schemas.google_places import DisplayName, GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
@@ -290,3 +291,62 @@ def test_error_note_escapes_html():
 def test_error_note_none_company_name():
     result = build_error_note("Datos", None, "error", "fail")
     assert "Desconocida" in result
+
+
+# --- Booking section tests ---
+
+
+def test_booking_section_full():
+    booking = BookingData(
+        url="https://www.booking.com/hotel/ar/test.html",
+        rating=8.4,
+        review_count=1567,
+        price_range="$$$",
+        hotel_name="Hotel Test Mendoza",
+    )
+    result = build_enrichment_note("Test Hotel", None, None, booking_data=booking)
+    assert "Booking.com" in result
+    assert "8.4/10" in result
+    assert "1,567 reviews" in result
+    assert "$$$" in result
+    assert "Hotel Test Mendoza" in result
+    assert "Ver en Booking.com" in result
+
+
+def test_booking_section_none():
+    """No booking_data → no Booking section."""
+    result = build_enrichment_note("Test", None, None, booking_data=None)
+    assert "Booking.com" not in result
+
+
+def test_booking_section_empty_data():
+    """BookingData with no rating/name/url → no Booking section."""
+    booking = BookingData()
+    result = build_enrichment_note("Test", None, None, booking_data=booking)
+    assert "Booking.com" not in result
+
+
+def test_booking_section_rating_only():
+    """BookingData with only rating → shows Booking section."""
+    booking = BookingData(rating=7.5, url="https://booking.com/hotel/ar/x")
+    result = build_enrichment_note("Test", None, None, booking_data=booking)
+    assert "Booking.com" in result
+    assert "7.5/10" in result
+    assert "reviews" not in result
+
+
+def test_booking_section_order():
+    """Booking section appears after Website and before TripAdvisor."""
+    web = WebScrapedData(phones=["+541152630435"], source_url="https://hotel.com")
+    booking = BookingData(rating=8.0, url="https://booking.com/hotel/ar/x")
+    ta = TripAdvisorLocation(location_id="1", rating="4.0", num_reviews="100")
+    place = GooglePlace(formattedAddress="Calle 1")
+
+    result = build_enrichment_note("Test", place, ta, web_data=web, booking_data=booking)
+
+    website_pos = result.index("Website")
+    booking_pos = result.index("Booking.com")
+    ta_pos = result.index("TripAdvisor")
+    google_pos = result.index("Google Places")
+
+    assert website_pos < booking_pos < ta_pos < google_pos

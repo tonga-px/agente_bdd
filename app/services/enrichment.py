@@ -5,7 +5,9 @@ from app.exceptions.custom import RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
 from app.mappers.note_builder import build_enrichment_note, build_error_note
+from app.schemas.booking import BookingData
 from app.schemas.responses import CompanyResult, EnrichmentResponse
+from app.services.booking import BookingScraperService
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
 from app.schemas.google_places import GooglePlace
@@ -18,9 +20,22 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_phone(phone: str) -> str:
-    """Normalize phone to E.164: strip non-digits, prepend '+'."""
+    """Normalize phone to E.164: strip non-digits, prepend '+'.
+
+    Returns "" for invalid numbers:
+    - starts with 0 (local number without country code)
+    - fewer than 7 or more than 15 digits (E.164 limits)
+    """
     digits = "".join(c for c in phone if c.isdigit())
-    return f"+{digits}" if digits else ""
+    if not digits:
+        return ""
+    if digits[0] == "0":
+        logger.debug("Rejected local phone (starts with 0): %s", phone)
+        return ""
+    if len(digits) < 7 or len(digits) > 15:
+        logger.debug("Rejected phone outside E.164 range (%d digits): %s", len(digits), phone)
+        return ""
+    return f"+{digits}"
 
 HUBSPOT_DELAY = 0.5  # seconds between HubSpot calls
 MAX_COMPANIES_PER_REQUEST = 1
@@ -33,13 +48,22 @@ class EnrichmentService:
         google_places: GooglePlacesService,
         tripadvisor: TripAdvisorService | None = None,
         website_scraper: WebsiteScraperService | None = None,
+        booking_scraper: BookingScraperService | None = None,
         overwrite: bool = False,
     ):
         self._hubspot = hubspot
         self._google = google_places
         self._tripadvisor = tripadvisor
         self._website_scraper = website_scraper
+        self._booking_scraper = booking_scraper
         self._overwrite = overwrite
+
+    async def resolve_next_company_id(self) -> str | None:
+        """Search for the next company to enrich; return its ID or None."""
+        companies = await self._hubspot.search_companies()
+        if companies:
+            return companies[0].id
+        return None
 
     async def run(self, company_id: str | None = None) -> EnrichmentResponse:
         if company_id:
@@ -190,6 +214,24 @@ class EnrichmentService:
                         company.id,
                     )
 
+        # --- Booking.com scraping (isolated, never blocks enrichment) ---
+        booking_data: BookingData | None = None
+        if self._booking_scraper:
+            try:
+                booking_data = await self._booking_scraper.search_and_scrape(
+                    hotel_name=props.name or "",
+                    city=props.city,
+                    country=props.country,
+                    website_html=web_data.raw_html if web_data else None,
+                )
+                if not booking_data.rating and not booking_data.review_count:
+                    booking_data = None
+            except Exception:
+                logger.exception(
+                    "Booking scrape failed for company %s, continuing without it",
+                    company.id,
+                )
+
         # --- Merge results ---
         if place is None and ta_location is None:
             await self._hubspot.update_company(company.id, {"agente": ""})
@@ -211,11 +253,17 @@ class EnrichmentService:
             updates.update(google_updates)
             changes.extend(google_changes)
 
-            # Always write place_id and display name (no smart merge)
+            # Always write place_id, display name, city, state, plaza (no smart merge)
             if place.id:
                 updates["id_hotel"] = place.id
             if place.displayName and place.displayName.text:
                 updates["name"] = place.displayName.text
+            if parsed.city:
+                updates["city"] = parsed.city
+            if parsed.state:
+                updates["state"] = parsed.state
+            if parsed.plaza:
+                updates["plaza"] = parsed.plaza
 
         # Normalize company phone to E.164
         if "phone" in updates:
@@ -241,7 +289,8 @@ class EnrichmentService:
 
         # --- Create enrichment note ---
         note_body = build_enrichment_note(
-            props.name, place, ta_location, ta_photos=ta_photos, web_data=web_data,
+            props.name, place, ta_location, ta_photos=ta_photos,
+            web_data=web_data, booking_data=booking_data,
         )
         try:
             await self._hubspot.create_note(company.id, note_body)
@@ -334,11 +383,12 @@ class EnrichmentService:
 
             # --- Website contacts ---
             if web_data:
-                # Find first unique web phone
+                # Find first unique web phone (normalized)
                 web_phone = ""
                 for p in (web_data.phones or []):
-                    if _digits(p) not in all_known:
-                        web_phone = p
+                    normalized_p = _normalize_phone(p)
+                    if normalized_p and _digits(normalized_p) not in all_known:
+                        web_phone = normalized_p
                         break
 
                 web_whatsapp = web_data.whatsapp or ""

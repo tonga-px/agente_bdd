@@ -4,7 +4,12 @@ import respx
 from httpx import Response
 
 from app.exceptions.custom import HubSpotError
-from app.services.hubspot import COMPANY_URL, CONTACTS_URL, HubSpotService
+from app.services.hubspot import (
+    COMPANY_URL,
+    CONTACTS_URL,
+    EMAILS_URL,
+    HubSpotService,
+)
 
 
 COMPANY_ID = "12345"
@@ -131,3 +136,73 @@ async def test_update_contact_error():
             await service.update_contact(CONTACT_ID, {"phone": "+56 9 9999"})
 
     assert exc_info.value.status_code == 404
+
+
+# --- get_associated_emails 403 silencing tests ---
+
+ASSOC_EMAILS_URL = "https://api.hubapi.com/crm/v4/objects/companies/12345/associations/emails"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_email_403_disables_future_fetches():
+    """First 403 returns partial results and disables future email fetches."""
+    respx.get(ASSOC_EMAILS_URL).mock(
+        return_value=Response(200, json={"results": [{"toObjectId": "e1"}, {"toObjectId": "e2"}]})
+    )
+    respx.get(f"{EMAILS_URL}/e1").mock(
+        return_value=Response(200, json={"id": "e1", "properties": {"hs_email_subject": "Hello"}})
+    )
+    respx.get(f"{EMAILS_URL}/e2").mock(
+        return_value=Response(403, text="Forbidden")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+
+        # First call: gets e1, hits 403 on e2 → returns partial
+        emails = await service.get_associated_emails(COMPANY_ID)
+        assert len(emails) == 1
+        assert service._email_fetch_disabled is True
+
+        # Second call: short-circuits, returns empty
+        emails2 = await service.get_associated_emails(COMPANY_ID)
+        assert emails2 == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_email_no_403_works_normally():
+    """Normal flow without 403 — all emails fetched."""
+    respx.get(ASSOC_EMAILS_URL).mock(
+        return_value=Response(200, json={"results": [{"toObjectId": "e1"}]})
+    )
+    respx.get(f"{EMAILS_URL}/e1").mock(
+        return_value=Response(200, json={"id": "e1", "properties": {"hs_email_subject": "Hi"}})
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        emails = await service.get_associated_emails(COMPANY_ID)
+
+    assert len(emails) == 1
+    assert service._email_fetch_disabled is False
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_email_other_error_still_warns():
+    """Non-403 errors (e.g. 500) log a warning but don't disable fetching."""
+    respx.get(ASSOC_EMAILS_URL).mock(
+        return_value=Response(200, json={"results": [{"toObjectId": "e1"}]})
+    )
+    respx.get(f"{EMAILS_URL}/e1").mock(
+        return_value=Response(500, text="Server Error")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        emails = await service.get_associated_emails(COMPANY_ID)
+
+    assert len(emails) == 0
+    assert service._email_fetch_disabled is False

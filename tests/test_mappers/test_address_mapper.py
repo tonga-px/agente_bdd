@@ -11,6 +11,7 @@ def test_parse_full_address():
         _comp("123", "123", ["street_number"]),
         _comp("Main Street", "Main St", ["route"]),
         _comp("Springfield", "Springfield", ["locality"]),
+        _comp("Sangamon County", "Sangamon County", ["administrative_area_level_2"]),
         _comp("Illinois", "IL", ["administrative_area_level_1"]),
         _comp("62704", "62704", ["postal_code"]),
         _comp("United States", "US", ["country"]),
@@ -22,6 +23,7 @@ def test_parse_full_address():
     assert parsed.state == "Illinois"
     assert parsed.zip == "62704"
     assert parsed.country == "United States"
+    assert parsed.plaza == "Sangamon County"
 
 
 def test_parse_missing_street_number():
@@ -56,3 +58,14 @@ def test_sublocality_fallback():
     parsed = parse_address_components(components)
 
     assert parsed.city == "Palermo"
+
+
+def test_parse_plaza_from_level_2():
+    components = [
+        _comp("Valparaíso", "Valparaíso", ["administrative_area_level_2"]),
+    ]
+    parsed = parse_address_components(components)
+
+    assert parsed.plaza == "Valparaíso"
+    assert parsed.city is None
+    assert parsed.state is None

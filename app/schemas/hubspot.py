@@ -15,6 +15,7 @@ class HubSpotCompanyProperties(BaseModel):
     id_hotel: str | None = None
     id_tripadvisor: str | None = None
     market_fit: str | None = None
+    plaza: str | None = None
 
 
 class HubSpotCompany(BaseModel):

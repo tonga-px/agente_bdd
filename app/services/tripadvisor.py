@@ -45,19 +45,42 @@ def _significant_tokens(name: str) -> set[str]:
     return {w for w in _normalize(name).split() if len(w) > 2 and w not in _STOP_WORDS}
 
 
+def _compound_matches(tokens: set[str], other_tokens: set[str]) -> set[str]:
+    """Find matches by concatenating adjacent pairs of sorted tokens.
+
+    Example: tokens {"life", "style"} → "lifestyle" matches "lifestyle" in other_tokens.
+    """
+    if len(tokens) < 2:
+        return set()
+    sorted_tokens = sorted(tokens)
+    matches = set()
+    for i in range(len(sorted_tokens) - 1):
+        compound = sorted_tokens[i] + sorted_tokens[i + 1]
+        if compound in other_tokens:
+            matches.add(compound)
+    return matches
+
+
 def names_match(company_name: str, ta_name: str) -> bool:
     """Check if there is meaningful word overlap between two names.
 
     If the company name has 2+ significant tokens, at least 2 must match
     to avoid false positives on generic words like 'lago', 'sol', etc.
+
+    Also considers compound matches: "life" + "style" matches "lifestyle".
+    Each compound match counts as 2 because it covers two constituent tokens.
     """
     company_tokens = _significant_tokens(company_name)
     ta_tokens = _significant_tokens(ta_name)
     if not company_tokens or not ta_tokens:
         return False
-    overlap = company_tokens & ta_tokens
+    direct_overlap = company_tokens & ta_tokens
+    # Bidirectional compound matching (each counts as 2 tokens)
+    compound_fwd = _compound_matches(company_tokens, ta_tokens)
+    compound_rev = _compound_matches(ta_tokens, company_tokens)
+    score = len(direct_overlap) + 2 * len(compound_fwd | compound_rev)
     required = min(2, len(company_tokens))
-    return len(overlap) >= required
+    return score >= required
 
 
 class TripAdvisorService:

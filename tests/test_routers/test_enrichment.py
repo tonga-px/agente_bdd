@@ -92,6 +92,13 @@ def _mock_ta_empty():
     )
 
 
+def _mock_get_company(company_id, properties):
+    """Mock HubSpot GET company endpoint (used after router resolves company via search)."""
+    respx.get(f"https://api.hubapi.com/crm/v3/objects/companies/{company_id}").mock(
+        return_value=Response(200, json={"id": company_id, "properties": properties})
+    )
+
+
 def _mock_notes():
     """Mock HubSpot notes creation."""
     respx.post(HUBSPOT_NOTES_URL).mock(
@@ -148,6 +155,11 @@ async def test_enrich_full_flow(client):
         )
     )
 
+    # Mock HubSpot GET company (router resolves via search, service fetches via GET)
+    _mock_get_company("12345", {
+        "name": "Acme Corp", "city": "Santiago", "country": "Chile", "agente": "datos",
+    })
+
     # Mock Google Places search
     respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(
@@ -169,6 +181,7 @@ async def test_enrich_full_flow(client):
                             {"longText": "123", "shortText": "123", "types": ["street_number"]},
                             {"longText": "Av. Providencia", "shortText": "Av. Providencia", "types": ["route"]},
                             {"longText": "Santiago", "shortText": "Santiago", "types": ["locality"]},
+                            {"longText": "Provincia de Santiago", "shortText": "Provincia de Santiago", "types": ["administrative_area_level_2"]},
                             {"longText": "Región Metropolitana", "shortText": "RM", "types": ["administrative_area_level_1"]},
                             {"longText": "7500000", "shortText": "7500000", "types": ["postal_code"]},
                             {"longText": "Chile", "shortText": "CL", "types": ["country"]},
@@ -208,13 +221,16 @@ async def test_enrich_full_flow(client):
     assert len(result["changes"]) > 0
     assert "Fotos TripAdvisor" in result["note"]
 
-    # Verify id_tripadvisor, id_hotel, and name were sent to HubSpot
+    # Verify force-written fields were sent to HubSpot
     patch_calls = [c for c in respx.calls if c.request.method == "PATCH"]
     assert len(patch_calls) == 2  # First is "pendiente", second is enrichment
     body = json.loads(patch_calls[1].request.content)  # Check the enrichment update
     assert body["properties"]["id_tripadvisor"] == "999"
     assert body["properties"]["id_hotel"] == "ChIJN1t_tDeuEmsRUsoyG83frY4"
     assert body["properties"]["name"] == "Acme Corp Hotel"
+    assert body["properties"]["city"] == "Santiago"
+    assert body["properties"]["state"] == "Región Metropolitana"
+    assert body["properties"]["plaza"] == "Provincia de Santiago"
 
 
 @respx.mock
@@ -257,6 +273,11 @@ async def test_enrich_no_google_results(client):
             },
         )
     )
+
+    # Mock HubSpot GET company
+    _mock_get_company("99999", {
+        "name": "Unknown Corp", "agente": "datos",
+    })
 
     respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(200, json={"places": []})
@@ -307,6 +328,12 @@ async def test_enrich_with_id_hotel_uses_text_search(client):
             },
         )
     )
+
+    # Mock HubSpot GET company
+    _mock_get_company("12345", {
+        "name": "Acme Corp", "city": "Santiago", "country": "Chile",
+        "agente": "datos", "id_hotel": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+    })
 
     # Mock Google Places POST text_search (NOT GET details)
     respx.post(GOOGLE_PLACES_URL).mock(
@@ -479,6 +506,11 @@ async def test_enrich_tripadvisor_failure_still_enriches(client):
         )
     )
 
+    # Mock HubSpot GET company
+    _mock_get_company("12345", {
+        "name": "Acme Corp", "city": "Santiago", "country": "Chile", "agente": "datos",
+    })
+
     # Mock Google Places search — succeeds
     respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(
@@ -558,6 +590,12 @@ async def test_enrich_id_hotel_ignored_uses_text_search(client):
             },
         )
     )
+
+    # Mock HubSpot GET company
+    _mock_get_company("12345", {
+        "name": "Salguero Suites", "city": "Buenos Aires", "country": "Argentina",
+        "agente": "datos", "id_hotel": "INVALID_PLACE_ID",
+    })
 
     # Mock Google text search (no GET details call at all)
     respx.post(GOOGLE_PLACES_URL).mock(
@@ -654,6 +692,12 @@ async def test_enrich_does_not_overwrite_existing_tripadvisor_id(client):
         )
     )
 
+    # Mock HubSpot GET company
+    _mock_get_company("12345", {
+        "name": "Acme Corp", "city": "Santiago", "country": "Chile",
+        "agente": "datos", "id_tripadvisor": "888",
+    })
+
     # Mock Google Places search
     respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(
@@ -728,6 +772,11 @@ async def test_enrich_tripadvisor_failure_no_id_tripadvisor_in_update(client):
         )
     )
 
+    # Mock HubSpot GET company
+    _mock_get_company("12345", {
+        "name": "Acme Corp", "city": "Santiago", "country": "Chile", "agente": "datos",
+    })
+
     # Mock Google Places search — succeeds
     respx.post(GOOGLE_PLACES_URL).mock(
         return_value=Response(
@@ -799,10 +848,55 @@ async def test_enrich_duplicate_rejected(client):
 
     await asyncio.sleep(0.1)
 
-    # Second request — rejected
+    # Second request — duplicate, returns 200 with existing job_id
     resp2 = await client.post("/datos", json={"company_id": "12345"})
-    assert resp2.status_code == 409
-    assert "Ya existe un job activo" in resp2.json()["detail"]
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["status"] == "already_running"
+    assert "job_id" in data2
+
+
+@respx.mock
+async def test_enrich_search_then_explicit_duplicate_rejected(client):
+    """Search-based job resolves company_id; explicit request for same company is rejected."""
+    # Mock HubSpot search returning company 12345
+    respx.post(HUBSPOT_SEARCH_URL).mock(
+        return_value=Response(200, json={
+            "results": [{
+                "id": "12345",
+                "properties": {"name": "Acme Corp", "city": "Santiago", "country": "Chile", "agente": "datos"},
+            }]
+        })
+    )
+
+    # Mock GET company (used by service.run after router resolves)
+    respx.get(HUBSPOT_COMPANY_URL).mock(
+        return_value=Response(200, json={
+            "id": "12345",
+            "properties": {"name": "Acme Corp", "city": "Santiago", "country": "Chile", "agente": "datos"},
+        })
+    )
+
+    # Google Places hangs to keep the job running
+    async def _slow_google(request):
+        await asyncio.sleep(5)
+        return Response(200, json={"places": []})
+
+    respx.post(GOOGLE_PLACES_URL).mock(side_effect=_slow_google)
+    _mock_ta_empty()
+
+    # First request — search-based (no company_id) — accepted
+    resp1 = await client.post("/datos")
+    assert resp1.status_code == 202
+
+    await asyncio.sleep(0.1)
+
+    # Second request — explicit company_id — duplicate detected
+    resp2 = await client.post("/datos", json={"company_id": "12345"})
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["status"] == "already_running"
+    assert "job_id" in data2
 
 
 @respx.mock
@@ -818,3 +912,34 @@ async def test_sync_endpoint(client):
     data = resp.json()
     assert data["total_found"] == 0
     assert data["enriched"] == 0
+
+
+@respx.mock
+async def test_enrich_cooldown_rejects_recent(client):
+    """A recently completed enrichment for the same company is rejected with 409."""
+    # First, run a successful enrichment to completion
+    respx.get("https://api.hubapi.com/crm/v3/objects/companies/67890").mock(
+        return_value=Response(200, json={
+            "id": "67890",
+            "properties": {"name": "Cool Corp", "city": "Lima", "country": "Peru", "agente": ""},
+        })
+    )
+    respx.post(GOOGLE_PLACES_URL).mock(
+        return_value=Response(200, json={"places": []})
+    )
+    _mock_ta_empty()
+    respx.patch("https://api.hubapi.com/crm/v3/objects/companies/67890").mock(
+        return_value=Response(200, json={})
+    )
+
+    # Complete the first job
+    job = await submit_and_wait(client, json={"company_id": "67890"})
+    assert job["status"] == "completed"
+
+    # Second request — cooldown, returns 200 with finished_at
+    resp2 = await client.post("/datos", json={"company_id": "67890"})
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["status"] == "recently_completed"
+    assert "job_id" in data2
+    assert "finished_at" in data2

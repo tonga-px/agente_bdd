@@ -7,3 +7,4 @@ class ParsedAddress(BaseModel):
     state: str | None = None
     zip: str | None = None
     country: str | None = None
+    plaza: str | None = None

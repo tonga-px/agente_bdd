@@ -29,6 +29,7 @@ def merge_fields(
             place.internationalPhoneNumber or place.nationalPhoneNumber,
         ),
         "website": (current.website, place.websiteUri),
+        "plaza": (current.plaza, parsed.plaza),
     }
 
     updates: dict[str, str] = {}

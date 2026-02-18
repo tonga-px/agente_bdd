@@ -36,6 +36,7 @@ SEARCH_PROPERTIES = [
     "id_hotel",
     "id_tripadvisor",
     "market_fit",
+    "plaza",
 ]
 
 
@@ -46,6 +47,7 @@ class HubSpotService:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
+        self._email_fetch_disabled = False
 
     async def search_companies(self, agente_value: str = "datos") -> list[HubSpotCompany]:
         payload = {
@@ -194,6 +196,9 @@ class HubSpotService:
     async def get_associated_emails(
         self, company_id: str, limit: int = 10
     ) -> list[HubSpotEmail]:
+        if self._email_fetch_disabled:
+            return []
+
         ids = await self._get_associated_ids(company_id, "emails")
         emails: list[HubSpotEmail] = []
         for obj_id in ids[:limit]:
@@ -203,6 +208,12 @@ class HubSpotService:
                 params={"properties": "hs_email_subject,hs_email_direction,hs_timestamp"},
                 headers=self._headers,
             )
+            if resp.status_code == 403:
+                logger.info(
+                    "Email fetch returned 403 (missing scope), disabling for this session"
+                )
+                self._email_fetch_disabled = True
+                return emails
             if resp.status_code >= 400:
                 logger.warning("Failed to fetch email %s: %s", obj_id, resp.status_code)
                 continue

@@ -172,10 +172,12 @@ async def test_prospeccion_duplicate_rejected(client):
     # Wait a bit for job to start running
     await asyncio.sleep(0.1)
 
-    # Second request — rejected
+    # Second request — duplicate, returns 200 with existing job_id
     resp2 = await client.post("/llamada_prospeccion", json={"company_id": "C1"})
-    assert resp2.status_code == 409
-    assert "Ya existe un job activo" in resp2.json()["detail"]
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["status"] == "already_running"
+    assert "job_id" in data2
 
 
 @respx.mock

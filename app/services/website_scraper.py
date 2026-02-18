@@ -131,6 +131,7 @@ class WebsiteScraperService:
             whatsapp=whatsapp,
             emails=emails,
             source_url=url,
+            raw_html=html,
         )
 
     async def _fetch_page(self, url: str) -> str | None:

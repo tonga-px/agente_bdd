@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.dependencies import JobStoreDep, ProspeccionDep
@@ -44,12 +45,26 @@ async def llamada_prospeccion(
 
     company_id = request.company_id if request else None
 
+    # Resolve company upfront so duplicate detection uses the actual company ID
+    if company_id is None:
+        company_id = await service.resolve_next_company_id()
+
     existing = store.has_active_job("prospeccion", company_id)
     if existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Ya existe un job activo para esta tarea (job_id={existing.job_id})",
-        )
+        return JSONResponse(content={
+            "job_id": existing.job_id,
+            "status": "already_running",
+            "message": "Ya existe un job activo para esta tarea",
+        })
+
+    recent = store.recently_completed_job("prospeccion", company_id)
+    if recent:
+        return JSONResponse(content={
+            "job_id": recent.job_id,
+            "status": "recently_completed",
+            "message": "Esta empresa fue procesada recientemente",
+            "finished_at": recent.finished_at.isoformat() if recent.finished_at else None,
+        })
 
     job = store.create_job(company_id=company_id, task_type="prospeccion")
     asyncio.create_task(_run_prospeccion(job.job_id, service, store, company_id))

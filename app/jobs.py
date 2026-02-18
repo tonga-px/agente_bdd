@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -62,6 +62,26 @@ class JobStore:
         active = (JobStatus.pending, JobStatus.running)
         for job in self._jobs.values():
             if job.task_type == task_type and job.status in active and job.company_id == company_id:
+                return job
+        return None
+
+    def recently_completed_job(
+        self,
+        task_type: str,
+        company_id: str | None = None,
+        cooldown_minutes: int = 30,
+    ) -> Job | None:
+        """Return a completed/failed job finished within the cooldown window, if any."""
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+        terminal = (JobStatus.completed, JobStatus.failed)
+        for job in self._jobs.values():
+            if (
+                job.task_type == task_type
+                and job.company_id == company_id
+                and job.status in terminal
+                and job.finished_at
+                and job.finished_at >= cutoff
+            ):
                 return job
         return None
 

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from html import escape
 
+from app.schemas.booking import BookingData
 from app.schemas.google_places import GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
@@ -235,6 +236,40 @@ def _format_website_section(web_data: WebScrapedData) -> str | None:
     return f"<h3>Website</h3><ul>{''.join(rows)}</ul>"
 
 
+def _format_booking_section(booking: BookingData) -> str | None:
+    rows: list[str] = []
+
+    # Rating + reviews
+    if booking.rating is not None:
+        rating_text = f"\u2b50 {booking.rating}/10"
+        if booking.review_count is not None:
+            rating_text += f" ({booking.review_count:,} reviews)"
+        rows.append(f"<li><strong>Rating:</strong> {rating_text}</li>")
+
+    # Price range
+    if booking.price_range:
+        rows.append(
+            f"<li><strong>Precio:</strong> {escape(booking.price_range)}</li>"
+        )
+
+    # Hotel name
+    if booking.hotel_name:
+        rows.append(
+            f"<li><strong>Nombre:</strong> {escape(booking.hotel_name)}</li>"
+        )
+
+    # URL
+    if booking.url:
+        url = escape(booking.url)
+        rows.append(
+            f'<li><strong>URL:</strong> <a href="{url}">Ver en Booking.com</a></li>'
+        )
+
+    if not rows:
+        return None
+    return f"<h3>Booking.com</h3><ul>{''.join(rows)}</ul>"
+
+
 def build_error_note(
     agent_name: str,
     company_name: str | None,
@@ -258,6 +293,7 @@ def build_enrichment_note(
     ta_location: TripAdvisorLocation | None,
     ta_photos: list[TripAdvisorPhoto] | None = None,
     web_data: WebScrapedData | None = None,
+    booking_data: BookingData | None = None,
 ) -> str:
     """Build an HTML enrichment summary for a HubSpot note."""
     title = escape(company_name or "Empresa")
@@ -271,6 +307,11 @@ def build_enrichment_note(
         web_section = _format_website_section(web_data)
         if web_section:
             parts.append(web_section)
+
+    if booking_data:
+        booking_section = _format_booking_section(booking_data)
+        if booking_section:
+            parts.append(booking_section)
 
     if ta_location:
         section = _format_tripadvisor_section(ta_location)

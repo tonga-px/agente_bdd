@@ -84,11 +84,22 @@ def _split_name(full_name: str) -> tuple[str, str]:
 
 
 def _normalize_phone(phone: str) -> str:
-    """Ensure phone number starts with '+' for E.164 format."""
-    phone = phone.strip()
-    if not phone.startswith("+"):
-        phone = "+" + phone
-    return phone
+    """Normalize phone to E.164: strip non-digits, prepend '+'.
+
+    Returns "" for invalid numbers:
+    - starts with 0 (local number without country code)
+    - fewer than 7 or more than 15 digits (E.164 limits)
+    """
+    digits = re.sub(r"\D", "", phone)
+    if not digits:
+        return ""
+    if digits[0] == "0":
+        logger.debug("Rejected local phone (starts with 0): %s", phone)
+        return ""
+    if len(digits) < 7 or len(digits) > 15:
+        logger.debug("Rejected phone outside E.164 range (%d digits): %s", len(digits), phone)
+        return ""
+    return f"+{digits}"
 
 
 def _parse_num_rooms(raw: str) -> int | None:
@@ -135,6 +146,15 @@ class ProspeccionService:
         self._hubspot = hubspot
         self._elevenlabs = elevenlabs
         self._google = google_places
+
+    async def resolve_next_company_id(self) -> str | None:
+        """Search for the next company to call; return its ID or None."""
+        companies = await self._hubspot.search_companies(
+            agente_value="llamada_prospeccion"
+        )
+        if companies:
+            return companies[0].id
+        return None
 
     async def run(self, company_id: str | None = None) -> ProspeccionResponse:
         if company_id:
@@ -329,6 +349,9 @@ class ProspeccionService:
 
         def _add(phone_raw: str, source: str) -> None:
             phone = _normalize_phone(phone_raw)
+            if not phone:
+                logger.info("Skipping invalid phone '%s' from %s", phone_raw, source)
+                return
             digits = re.sub(r"\D", "", phone)
             if digits not in seen:
                 seen.add(digits)

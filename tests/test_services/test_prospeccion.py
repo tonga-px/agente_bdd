@@ -25,6 +25,7 @@ from app.services.prospeccion import (
     ProspeccionService,
     _compute_market_fit,
     _describe_error,
+    _normalize_phone,
     _parse_num_rooms,
     _split_name,
 )
@@ -195,9 +196,9 @@ async def test_fallback_to_contact_phone():
     assert result.status == "completed"
     assert len(result.call_attempts) == 2
     assert result.call_attempts[0].status == "failed"
-    assert result.call_attempts[0].phone_number == "+56 1 1111"
+    assert result.call_attempts[0].phone_number == "+5611111"
     assert result.call_attempts[1].status == "connected"
-    assert result.call_attempts[1].phone_number == "+56 2 2222"
+    assert result.call_attempts[1].phone_number == "+5622222"
 
 
 @pytest.mark.asyncio
@@ -319,8 +320,8 @@ async def test_deduplicate_phones():
     # Should only have 2 attempts (company phone + contact mobile), not 3
     assert len(result.call_attempts) == 2
     phones = [a.phone_number for a in result.call_attempts]
-    assert "+56 1 1111" in phones
-    assert "+56 3 3333" in phones
+    assert "+5611111" in phones
+    assert "+5633333" in phones
 
 
 @pytest.mark.asyncio
@@ -347,7 +348,7 @@ async def test_deduplicate_phones_ignores_formatting():
     assert len(result.call_attempts) == 2
     phones = [a.phone_number for a in result.call_attempts]
     assert "+56323203958" in phones
-    assert "+56 9 8888" in phones
+    assert "+5698888" in phones
 
 
 @pytest.mark.asyncio
@@ -554,7 +555,7 @@ async def test_register_call_on_success():
     assert props["hs_call_direction"] == "OUTBOUND"
     assert props["hs_call_recording_url"] == "https://files.hubspot.com/call.mp3"
     assert "Hotel Test" in props["hs_call_title"]
-    assert props["hs_call_to_number"] == "+56 1 1111"
+    assert props["hs_call_to_number"] == "+5611111"
 
 
 @pytest.mark.asyncio
@@ -1103,7 +1104,7 @@ async def test_all_failed_creates_error_note():
     note_body = hubspot.create_note.call_args[0][1]
     assert "Llamada de Prospeccion" in note_body
     assert "No se pudo conectar" in note_body
-    assert "+56 1 1111" in note_body
+    assert "+5611111" in note_body
     assert "No answer" in note_body
 
 
@@ -1147,3 +1148,56 @@ def test_describe_error_generic_with_message():
 
 def test_describe_error_generic_empty_message():
     assert _describe_error(Exception()) == "Exception"
+
+
+# --- _normalize_phone tests (prospeccion) ---
+
+
+def test_prospeccion_normalize_phone_basic():
+    assert _normalize_phone("+56 1 1111") == "+5611111"
+
+
+def test_prospeccion_normalize_phone_rejects_zero():
+    """Local numbers starting with 0 are rejected."""
+    assert _normalize_phone("0336275307") == ""
+    assert _normalize_phone("+0336275307") == ""
+
+
+def test_prospeccion_normalize_phone_rejects_short():
+    assert _normalize_phone("12345") == ""
+
+
+def test_prospeccion_normalize_phone_rejects_long():
+    assert _normalize_phone("1234567890123456") == ""
+
+
+def test_prospeccion_normalize_phone_valid():
+    assert _normalize_phone("+56323203958") == "+56323203958"
+
+
+# --- _build_phone_list with invalid phones ---
+
+
+@pytest.mark.asyncio
+async def test_build_phone_list_skips_invalid_phones():
+    """Invalid phones (e.g. +0xxx) are excluded from the phone list."""
+    hubspot = AsyncMock(spec=HubSpotService)
+    elevenlabs = AsyncMock(spec=ElevenLabsService)
+
+    company = _make_company(phone="+0336275307")
+    contact = _make_contact(phone="+56 2 2222")
+    hubspot.get_company.return_value = company
+    hubspot.get_associated_notes.return_value = []
+    hubspot.get_associated_emails.return_value = []
+    hubspot.get_associated_contacts.return_value = [contact]
+
+    elevenlabs.start_outbound_call.return_value = OutboundCallResponse(
+        success=False, message="No answer"
+    )
+
+    service = ProspeccionService(hubspot, elevenlabs)
+    result = await service.run(company_id="C1")
+
+    # Only the valid contact phone should be attempted
+    assert len(result.call_attempts) == 1
+    assert result.call_attempts[0].phone_number == "+5622222"

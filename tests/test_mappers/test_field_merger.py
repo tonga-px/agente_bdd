@@ -14,6 +14,7 @@ def test_fills_empty_fields():
         address="Main St 123",
         city="Santiago",
         country="Chile",
+        plaza="Provincia de Santiago",
     )
 
     updates, changes = merge_fields(current, place, parsed, overwrite=False)
@@ -23,7 +24,8 @@ def test_fills_empty_fields():
     assert updates["country"] == "Chile"
     assert updates["phone"] == "+56 2 1234 5678"
     assert updates["website"] == "https://test.com"
-    assert len(changes) == 5
+    assert updates["plaza"] == "Provincia de Santiago"
+    assert len(changes) == 6
 
 
 def test_does_not_overwrite_existing():

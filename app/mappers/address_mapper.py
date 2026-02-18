@@ -34,4 +34,5 @@ def parse_address_components(components: list[AddressComponent]) -> ParsedAddres
         state=_find_component(components, "administrative_area_level_1"),
         zip=_find_short(components, "postal_code"),
         country=_find_component(components, "country"),
+        plaza=_find_component(components, "administrative_area_level_2"),
     )
