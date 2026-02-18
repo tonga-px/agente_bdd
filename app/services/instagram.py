@@ -102,9 +102,17 @@ def _extract_emails(biography: str | None, business_email: str | None) -> list[s
 
 
 def _try_parse_json(text: str) -> dict | None:
-    """Try to extract a JSON object from text."""
+    """Try to extract a JSON object from text, stripping markdown fences."""
+    text = text.strip()
+    # Strip markdown code fences (```json ... ```)
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+    if text.endswith("```"):
+        text = text.rsplit("```", 1)[0]
+    text = text.strip()
+
     try:
-        obj = json.loads(text.strip())
+        obj = json.loads(text)
         if isinstance(obj, dict):
             return obj
     except (json.JSONDecodeError, ValueError):
