@@ -415,10 +415,10 @@ class EnrichmentService:
         ta_location: TripAdvisorLocation | None,
         web_data: WebScrapedData | None = None,
     ) -> None:
-        """Create contacts from TripAdvisor and website data (best-effort).
+        """Create contacts from Google, TripAdvisor and website data (best-effort).
 
-        The Google phone is already on the company field, so we only create
-        contacts for *different* phones or web-scraped emails.
+        Google phone also gets a contact (with web email/WhatsApp if available).
+        TripAdvisor and website contacts are created for *different* phones or emails.
         """
         try:
             def _digits(p: str) -> str:
@@ -450,6 +450,9 @@ class EnrichmentService:
             if has_web_data:
                 need_existing = True
 
+            if google_phone:
+                need_existing = True
+
             existing_phones: set[str] = set()
             existing_emails: set[str] = set()
             if need_existing:
@@ -462,6 +465,35 @@ class EnrichmentService:
                         existing_emails.add(c.properties.email.strip().lower())
 
             all_known.update(existing_phones)
+
+            # Track email/WhatsApp consumed by Google contact to avoid repeating
+            used_email = ""
+            used_whatsapp = ""
+
+            # --- Google phone contact ---
+            if google_phone and _digits(google_phone) not in existing_phones:
+                contact_props: dict[str, str] = {
+                    "firstname": f"Recepcion {name}",
+                    "lastname": "/ Google",
+                    "phone": google_phone,
+                }
+                # Attach first unique web email if available
+                if web_data:
+                    for e in (web_data.emails or []):
+                        if e.lower() not in existing_emails:
+                            contact_props["email"] = e
+                            used_email = e
+                            break
+                    # Attach WhatsApp if available
+                    if web_data.whatsapp:
+                        contact_props["mobilephone"] = web_data.whatsapp
+                        contact_props["hs_whatsapp_phone_number"] = web_data.whatsapp
+                        used_whatsapp = web_data.whatsapp
+                await self._hubspot.create_contact(company_id, contact_props)
+                logger.info(
+                    "Created Google phone contact (%s) for company %s",
+                    google_phone, company_id,
+                )
 
             # --- TripAdvisor phone contact ---
             if ta_phone and _digits(ta_phone) not in all_known:
@@ -487,11 +519,15 @@ class EnrichmentService:
                         web_phone = normalized_p
                         break
 
+                # WhatsApp: skip if already used by Google contact
                 web_whatsapp = web_data.whatsapp or ""
-                # Find first unique web email
+                if web_whatsapp and web_whatsapp == used_whatsapp:
+                    web_whatsapp = ""
+
+                # Find first unique web email (skip if already used by Google contact)
                 web_email = ""
                 for e in (web_data.emails or []):
-                    if e.lower() not in existing_emails:
+                    if e.lower() not in existing_emails and e != used_email:
                         web_email = e
                         break
 
