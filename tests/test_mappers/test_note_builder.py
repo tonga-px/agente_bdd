@@ -8,6 +8,7 @@ from app.mappers.note_builder import (
 )
 from app.schemas.booking import BookingData
 from app.schemas.google_places import DisplayName, GooglePlace
+from app.schemas.instagram import InstagramData
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
 
@@ -404,5 +405,81 @@ def test_build_conflict_note_none_names():
 
 def test_build_conflict_note_escapes_html():
     result = build_conflict_note("<script>", "88888", "<b>Evil</b>", "<img>")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+# --- Instagram section tests ---
+
+
+def test_instagram_section_in_note():
+    ig = InstagramData(
+        username="hotelitapua",
+        full_name="Hotel Itapúa",
+        biography="Reservas: +595 21 123 4567",
+        profile_url="https://www.instagram.com/hotelitapua/",
+        follower_count=1500,
+        business_email="reservas@hotel.com",
+        bio_phones=["+595211234567"],
+        whatsapp="+595981654321",
+    )
+    result = build_enrichment_note("Hotel Test", None, None, instagram_data=ig)
+    assert "Instagram" in result
+    assert "Hotel Itap" in result
+    assert "Reservas:" in result
+    assert "1,500" in result
+    assert "+595211234567" in result
+    assert "reservas@hotel.com" in result
+    assert "+595981654321" in result
+    assert "@hotelitapua" in result
+
+
+def test_instagram_section_none():
+    """No instagram_data → no Instagram section."""
+    result = build_enrichment_note("Test", None, None, instagram_data=None)
+    assert "Instagram" not in result
+
+
+def test_instagram_section_empty_data():
+    """InstagramData with all None → no Instagram section."""
+    ig = InstagramData()
+    result = build_enrichment_note("Test", None, None, instagram_data=ig)
+    assert "Instagram" not in result
+
+
+def test_instagram_bio_truncated():
+    long_bio = "A" * 250
+    ig = InstagramData(username="test", biography=long_bio)
+    result = build_enrichment_note("Test", None, None, instagram_data=ig)
+    assert "A" * 200 + "..." in result
+    assert "A" * 201 + "..." not in result
+
+
+def test_instagram_section_order():
+    """Instagram section appears between Website and Booking."""
+    web = WebScrapedData(phones=["+541152630435"], source_url="https://hotel.com")
+    ig = InstagramData(username="test", full_name="Hotel Test",
+                       profile_url="https://www.instagram.com/test/")
+    booking = BookingData(rating=8.0, url="https://booking.com/hotel/ar/x")
+
+    result = build_enrichment_note(
+        "Test", None, None, web_data=web, booking_data=booking, instagram_data=ig,
+    )
+
+    website_pos = result.index("Website")
+    ig_pos = result.index("Instagram")
+    booking_pos = result.index("Booking.com")
+
+    assert website_pos < ig_pos < booking_pos
+
+
+def test_instagram_section_escapes_html():
+    ig = InstagramData(
+        username="test",
+        full_name="<script>alert('xss')</script>",
+        biography="<b>Evil</b>",
+        profile_url="https://www.instagram.com/test/",
+    )
+    result = build_enrichment_note("Test", None, None, instagram_data=ig)
     assert "<script>" not in result
     assert "&lt;script&gt;" in result

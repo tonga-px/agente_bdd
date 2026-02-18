@@ -13,6 +13,7 @@ from app.schemas.hubspot import (
     HubSpotContact,
     HubSpotContactProperties,
 )
+from app.schemas.instagram import InstagramData
 from app.schemas.tripadvisor import TripAdvisorLocation
 from app.schemas.website import WebScrapedData
 from app.exceptions.custom import HubSpotError
@@ -24,6 +25,7 @@ from app.services.enrichment import (
 )
 from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
+from app.services.instagram import InstagramService
 
 
 @pytest.fixture
@@ -708,3 +710,135 @@ async def test_id_hotel_conflict_merge_fails(enrichment_service):
     assert result.status == "enriched"
     # Enrichment note still created (at least 1)
     assert hs.create_note.await_count >= 1
+
+
+# --- Instagram integration tests ---
+
+
+def _ig_data(
+    business_phone=None, bio_phones=None, business_email=None,
+    bio_emails=None, whatsapp=None, username="hoteltest",
+):
+    return InstagramData(
+        username=username,
+        full_name="Hotel Test",
+        biography="Test bio",
+        profile_url=f"https://www.instagram.com/{username}/",
+        business_phone=business_phone,
+        bio_phones=bio_phones or [],
+        business_email=business_email,
+        bio_emails=bio_emails or [],
+        whatsapp=whatsapp,
+    )
+
+
+@pytest.mark.asyncio
+async def test_instagram_contact_created(service, hubspot_mock):
+    """Instagram with phone and email → creates '/ Instagram' contact."""
+    ig = _ig_data(
+        business_phone="+595211234567",
+        business_email="reservas@hotel.com",
+        whatsapp="+595981654321",
+    )
+
+    await service._create_contacts("C1", "Hotel IG", None, None, None, instagram_data=ig)
+
+    hubspot_mock.create_contact.assert_awaited_once_with(
+        "C1",
+        {
+            "firstname": "Recepcion Hotel IG",
+            "lastname": "/ Instagram",
+            "phone": "+595211234567",
+            "email": "reservas@hotel.com",
+            "mobilephone": "+595981654321",
+            "hs_whatsapp_phone_number": "+595981654321",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_instagram_bio_phones_used(service, hubspot_mock):
+    """Instagram bio_phones used when no business_phone."""
+    ig = _ig_data(bio_phones=["+595981111111"])
+
+    await service._create_contacts("C1", "Hotel IG", None, None, None, instagram_data=ig)
+
+    hubspot_mock.create_contact.assert_awaited_once()
+    call_args = hubspot_mock.create_contact.await_args.args[1]
+    assert call_args["phone"] == "+595981111111"
+    assert call_args["lastname"] == "/ Instagram"
+
+
+@pytest.mark.asyncio
+async def test_instagram_phone_dedup_against_google(service, hubspot_mock):
+    """Instagram phone same as Google phone → no Instagram contact created."""
+    place = _place(phone_intl="+595 21 123 4567")
+    ig = _ig_data(business_phone="+595211234567")
+
+    await service._create_contacts("C1", "Hotel Dup", place, None, None, instagram_data=ig)
+
+    # Only Google contact created, no Instagram contact
+    assert hubspot_mock.create_contact.await_count == 1
+    call_args = hubspot_mock.create_contact.await_args.args[1]
+    assert call_args["lastname"] == "/ Google"
+
+
+@pytest.mark.asyncio
+async def test_instagram_email_only_creates_contact(service, hubspot_mock):
+    """Instagram email (no phone) → contact created with email."""
+    ig = _ig_data(bio_emails=["info@hotel.com"])
+
+    await service._create_contacts("C1", "Hotel IG", None, None, None, instagram_data=ig)
+
+    hubspot_mock.create_contact.assert_awaited_once()
+    call_args = hubspot_mock.create_contact.await_args.args[1]
+    assert call_args["email"] == "info@hotel.com"
+    assert "phone" not in call_args
+
+
+@pytest.mark.asyncio
+async def test_instagram_no_data_no_contact(service, hubspot_mock):
+    """Instagram with no phone or email → no contact created."""
+    ig = _ig_data()
+
+    await service._create_contacts("C1", "Hotel IG", None, None, None, instagram_data=ig)
+
+    hubspot_mock.create_contact.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_instagram_url_triggers_instagram_scrape():
+    """Website URL is instagram.com → calls instagram.scrape(), not website_scraper.scrape()."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+    gp.text_search.return_value = GooglePlace(
+        id="ChIJ_test",
+        websiteUri="https://www.instagram.com/hotelitapua/",
+        formattedAddress="Asunción, Paraguay",
+        addressComponents=[
+            {"longText": "Asunción", "shortText": "ASU", "types": ["locality"]},
+            {"longText": "Paraguay", "shortText": "PY", "types": ["country"]},
+        ],
+    )
+
+    ig_mock = AsyncMock(spec=InstagramService)
+    ig_mock.scrape.return_value = _ig_data(business_phone="+595211234567")
+
+    ws_mock = AsyncMock()
+
+    svc = EnrichmentService(
+        hubspot=hs, google_places=gp,
+        website_scraper=ws_mock, instagram=ig_mock,
+        overwrite=False,
+    )
+
+    company = _company(name="Hotel Itapúa", city="Asunción", country="Paraguay")
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    ig_mock.scrape.assert_awaited_once_with("https://www.instagram.com/hotelitapua/")
+    ws_mock.scrape.assert_not_awaited()  # website scraper not called for IG URLs

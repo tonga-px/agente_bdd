@@ -3,6 +3,7 @@ from html import escape
 
 from app.schemas.booking import BookingData
 from app.schemas.google_places import GooglePlace
+from app.schemas.instagram import InstagramData
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
 
@@ -236,6 +237,30 @@ def _format_website_section(web_data: WebScrapedData) -> str | None:
     return f"<h3>Website</h3><ul>{''.join(rows)}</ul>"
 
 
+def _format_instagram_section(instagram: InstagramData) -> str | None:
+    rows: list[str] = []
+    if instagram.full_name:
+        rows.append(f"<li><strong>Nombre:</strong> {escape(instagram.full_name)}</li>")
+    if instagram.biography:
+        bio = instagram.biography[:200] + ("..." if len(instagram.biography) > 200 else "")
+        rows.append(f"<li><strong>Bio:</strong> {escape(bio)}</li>")
+    if instagram.follower_count is not None:
+        rows.append(f"<li><strong>Seguidores:</strong> {instagram.follower_count:,}</li>")
+    if instagram.bio_phones:
+        phones_str = ", ".join(escape(p) for p in instagram.bio_phones[:3])
+        rows.append(f"<li><strong>Telefonos:</strong> {phones_str}</li>")
+    if instagram.business_email:
+        rows.append(f"<li><strong>Email:</strong> {escape(instagram.business_email)}</li>")
+    if instagram.whatsapp:
+        rows.append(f"<li><strong>WhatsApp:</strong> {escape(instagram.whatsapp)}</li>")
+    if instagram.profile_url:
+        url = escape(instagram.profile_url)
+        rows.append(f'<li><strong>Perfil:</strong> <a href="{url}">@{escape(instagram.username or "")}</a></li>')
+    if not rows:
+        return None
+    return f"<h3>Instagram</h3><ul>{''.join(rows)}</ul>"
+
+
 def _format_booking_section(booking: BookingData) -> str | None:
     rows: list[str] = []
 
@@ -332,6 +357,7 @@ def build_enrichment_note(
     ta_photos: list[TripAdvisorPhoto] | None = None,
     web_data: WebScrapedData | None = None,
     booking_data: BookingData | None = None,
+    instagram_data: InstagramData | None = None,
 ) -> str:
     """Build an HTML enrichment summary for a HubSpot note."""
     title = escape(company_name or "Empresa")
@@ -345,6 +371,11 @@ def build_enrichment_note(
         web_section = _format_website_section(web_data)
         if web_section:
             parts.append(web_section)
+
+    if instagram_data:
+        ig_section = _format_instagram_section(instagram_data)
+        if ig_section:
+            parts.append(ig_section)
 
     if booking_data:
         booking_section = _format_booking_section(booking_data)

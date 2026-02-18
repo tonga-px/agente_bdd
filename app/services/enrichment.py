@@ -12,6 +12,7 @@ from app.mappers.note_builder import (
     build_merge_note,
 )
 from app.schemas.booking import BookingData
+from app.schemas.instagram import InstagramData
 from app.schemas.responses import CompanyResult, EnrichmentResponse
 from app.services.perplexity import PerplexityService
 from app.services.google_places import GooglePlacesService, build_search_query
@@ -94,6 +95,7 @@ class EnrichmentService:
         google_places: GooglePlacesService,
         tripadvisor: TripAdvisorService | None = None,
         website_scraper: WebsiteScraperService | None = None,
+        instagram: "InstagramService | None" = None,
         perplexity: PerplexityService | None = None,
         overwrite: bool = False,
     ):
@@ -101,6 +103,7 @@ class EnrichmentService:
         self._google = google_places
         self._tripadvisor = tripadvisor
         self._website_scraper = website_scraper
+        self._instagram = instagram
         self._perplexity = perplexity
         self._overwrite = overwrite
 
@@ -243,22 +246,37 @@ class EnrichmentService:
                         company.id,
                     )
 
+        # --- Determine website URL ---
+        website_url = None
+        if place and place.websiteUri:
+            website_url = place.websiteUri
+        elif props.website and props.website.strip():
+            website_url = props.website.strip()
+
+        # --- Instagram scraping (if URL is Instagram) ---
+        from app.services.instagram import is_instagram_url
+
+        instagram_data: InstagramData | None = None
+        if self._instagram and website_url and is_instagram_url(website_url):
+            try:
+                instagram_data = await self._instagram.scrape(website_url)
+            except Exception:
+                logger.exception(
+                    "Instagram scrape failed for company %s, continuing without it",
+                    company.id,
+                )
+            website_url = None  # Don't web-scrape instagram.com
+
         # --- Website scraping (isolated, never blocks enrichment) ---
         web_data: WebScrapedData | None = None
-        if self._website_scraper:
-            website_url = None
-            if place and place.websiteUri:
-                website_url = place.websiteUri
-            elif props.website and props.website.strip():
-                website_url = props.website.strip()
-            if website_url:
-                try:
-                    web_data = await self._website_scraper.scrape(website_url)
-                except Exception:
-                    logger.exception(
-                        "Website scrape failed for company %s, continuing without it",
-                        company.id,
-                    )
+        if self._website_scraper and website_url:
+            try:
+                web_data = await self._website_scraper.scrape(website_url)
+            except Exception:
+                logger.exception(
+                    "Website scrape failed for company %s, continuing without it",
+                    company.id,
+                )
 
         # --- Booking.com via Perplexity (isolated, never blocks enrichment) ---
         booking_data: BookingData | None = None
@@ -371,6 +389,7 @@ class EnrichmentService:
         note_body = build_enrichment_note(
             props.name, place, ta_location, ta_photos=ta_photos,
             web_data=web_data, booking_data=booking_data,
+            instagram_data=instagram_data,
         )
         try:
             await self._hubspot.create_note(company.id, note_body)
@@ -397,7 +416,10 @@ class EnrichmentService:
                 logger.exception("Failed to create conflict note for company %s", company.id)
 
         # --- Create contacts from phone numbers and web data (best-effort) ---
-        await self._create_contacts(company.id, props.name, place, ta_location, web_data)
+        await self._create_contacts(
+            company.id, props.name, place, ta_location, web_data,
+            instagram_data=instagram_data,
+        )
 
         return CompanyResult(
             company_id=company.id,
@@ -414,11 +436,12 @@ class EnrichmentService:
         place: GooglePlace | None,
         ta_location: TripAdvisorLocation | None,
         web_data: WebScrapedData | None = None,
+        instagram_data: InstagramData | None = None,
     ) -> None:
-        """Create contacts from Google, TripAdvisor and website data (best-effort).
+        """Create contacts from Google, Instagram, TripAdvisor and website data (best-effort).
 
         Google phone also gets a contact (with web email/WhatsApp if available).
-        TripAdvisor and website contacts are created for *different* phones or emails.
+        Instagram, TripAdvisor and website contacts are created for *different* phones or emails.
         """
         try:
             def _digits(p: str) -> str:
@@ -448,6 +471,13 @@ class EnrichmentService:
 
             has_web_data = web_data and (web_data.phones or web_data.emails)
             if has_web_data:
+                need_existing = True
+
+            has_ig_data = instagram_data and (
+                instagram_data.business_phone or instagram_data.bio_phones
+                or instagram_data.business_email or instagram_data.bio_emails
+            )
+            if has_ig_data:
                 need_existing = True
 
             if google_phone:
@@ -494,6 +524,57 @@ class EnrichmentService:
                     "Created Google phone contact (%s) for company %s",
                     google_phone, company_id,
                 )
+
+            # --- Instagram contact ---
+            if instagram_data:
+                ig_phones = []
+                if instagram_data.business_phone:
+                    ig_phones.append(instagram_data.business_phone)
+                ig_phones.extend(instagram_data.bio_phones)
+
+                ig_emails = []
+                if instagram_data.business_email:
+                    ig_emails.append(instagram_data.business_email)
+                ig_emails.extend(instagram_data.bio_emails)
+
+                ig_phone = ""
+                for p in ig_phones:
+                    if _digits(p) not in all_known:
+                        ig_phone = p
+                        break
+
+                ig_email = ""
+                for e in ig_emails:
+                    if e.lower() not in existing_emails and e != used_email:
+                        ig_email = e
+                        break
+
+                ig_whatsapp = instagram_data.whatsapp or ""
+                if ig_whatsapp and ig_whatsapp == used_whatsapp:
+                    ig_whatsapp = ""
+
+                if ig_phone or ig_email:
+                    contact_props = {
+                        "firstname": f"Recepcion {name}",
+                        "lastname": "/ Instagram",
+                    }
+                    if ig_phone:
+                        contact_props["phone"] = ig_phone
+                    if ig_email:
+                        contact_props["email"] = ig_email
+                    if ig_whatsapp:
+                        contact_props["mobilephone"] = ig_whatsapp
+                        contact_props["hs_whatsapp_phone_number"] = ig_whatsapp
+                    await self._hubspot.create_contact(company_id, contact_props)
+                    if ig_phone:
+                        all_known.add(_digits(ig_phone))
+                    if ig_email:
+                        used_email = ig_email
+                    if ig_whatsapp:
+                        used_whatsapp = ig_whatsapp
+                    logger.info(
+                        "Created Instagram contact for company %s", company_id,
+                    )
 
             # --- TripAdvisor phone contact ---
             if ta_phone and _digits(ta_phone) not in all_known:

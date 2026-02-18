@@ -30,6 +30,7 @@ from app.services.hubspot import HubSpotService
 from app.services.prospeccion import ProspeccionService
 from app.services.tripadvisor import TripAdvisorService
 from app.services.perplexity import PerplexityService
+from app.services.instagram import InstagramService
 from app.services.website_scraper import WebsiteScraperService
 
 
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
             tripadvisor = TripAdvisorService(client, settings.tripadvisor_api_key)
 
         website_scraper = WebsiteScraperService(client)
+        instagram = InstagramService(client)
 
         perplexity: PerplexityService | None = None
         if settings.perplexity_api_key:
@@ -61,6 +63,7 @@ async def lifespan(app: FastAPI):
         enrichment = EnrichmentService(
             hubspot, google_places, tripadvisor=tripadvisor,
             website_scraper=website_scraper,
+            instagram=instagram,
             perplexity=perplexity,
             overwrite=settings.overwrite_existing,
         )
