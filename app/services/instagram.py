@@ -166,6 +166,8 @@ class InstagramService:
             logger.warning("Unexpected Perplexity response for Instagram %s", username)
             return InstagramData(username=username, profile_url=profile_url)
 
+        logger.info("Perplexity raw response for Instagram %s: %s", username, content[:500])
+
         parsed = _try_parse_json(content)
         if not parsed:
             logger.warning("Could not parse JSON from Perplexity for Instagram %s", username)
