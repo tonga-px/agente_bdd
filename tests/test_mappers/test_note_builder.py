@@ -1,6 +1,11 @@
 from unittest.mock import patch
 
-from app.mappers.note_builder import build_enrichment_note, build_error_note
+from app.mappers.note_builder import (
+    build_conflict_note,
+    build_enrichment_note,
+    build_error_note,
+    build_merge_note,
+)
 from app.schemas.booking import BookingData
 from app.schemas.google_places import DisplayName, GooglePlace
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
@@ -350,3 +355,54 @@ def test_booking_section_order():
     google_pos = result.index("Google Places")
 
     assert website_pos < booking_pos < ta_pos < google_pos
+
+
+# --- build_merge_note tests ---
+
+
+def test_build_merge_note():
+    result = build_merge_note("Hotel Sol", "99999", "Hotel Sol Viejo")
+    assert "Empresa Fusionada" in result
+    assert "Hotel Sol" in result
+    assert "99999" in result
+    assert "Hotel Sol Viejo" in result
+    assert "Fecha:" in result
+    assert "id_hotel" in result
+
+
+def test_build_merge_note_none_names():
+    result = build_merge_note(None, "99999", None)
+    assert "Empresa" in result
+    assert "Desconocida" in result
+
+
+def test_build_merge_note_escapes_html():
+    result = build_merge_note("<script>x</script>", "99999", "<b>Evil</b>")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+# --- build_conflict_note tests ---
+
+
+def test_build_conflict_note():
+    result = build_conflict_note("Hotel Sol", "88888", "Hotel Luna", "ChIJ_test")
+    assert "Conflicto id_hotel" in result
+    assert "Hotel Sol" in result
+    assert "88888" in result
+    assert "Hotel Luna" in result
+    assert "ChIJ_test" in result
+    assert "Fecha:" in result
+
+
+def test_build_conflict_note_none_names():
+    result = build_conflict_note(None, "88888", None, None)
+    assert "Empresa" in result
+    assert "Desconocida" in result
+    assert "N/A" in result
+
+
+def test_build_conflict_note_escapes_html():
+    result = build_conflict_note("<script>", "88888", "<b>Evil</b>", "<img>")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result

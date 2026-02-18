@@ -8,6 +8,7 @@ from app.services.hubspot import (
     COMPANY_URL,
     CONTACTS_URL,
     EMAILS_URL,
+    MERGE_URL,
     HubSpotService,
 )
 
@@ -206,3 +207,39 @@ async def test_email_other_error_still_warns():
 
     assert len(emails) == 0
     assert service._email_fetch_disabled is False
+
+
+# --- merge_companies tests ---
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_merge_companies_success():
+    respx.post(MERGE_URL).mock(
+        return_value=Response(200, json={"id": COMPANY_ID})
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        await service.merge_companies(COMPANY_ID, "99999")
+
+    req = respx.calls.last.request
+    import json
+    body = json.loads(req.content)
+    assert body["primaryObjectId"] == COMPANY_ID
+    assert body["objectIdToMerge"] == "99999"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_merge_companies_error():
+    respx.post(MERGE_URL).mock(
+        return_value=Response(400, text="bad request")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        with pytest.raises(HubSpotError) as exc_info:
+            await service.merge_companies(COMPANY_ID, "99999")
+
+    assert exc_info.value.status_code == 400

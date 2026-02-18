@@ -1,16 +1,23 @@
 import asyncio
 import logging
+import re
 
-from app.exceptions.custom import RateLimitError
+from app.exceptions.custom import HubSpotError, RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
-from app.mappers.note_builder import build_enrichment_note, build_error_note
+from app.mappers.note_builder import (
+    build_conflict_note,
+    build_enrichment_note,
+    build_error_note,
+    build_merge_note,
+)
 from app.schemas.booking import BookingData
 from app.schemas.responses import CompanyResult, EnrichmentResponse
 from app.services.booking import BookingScraperService
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
 from app.schemas.google_places import GooglePlace
+from app.schemas.hubspot import HubSpotCompanyProperties
 from app.schemas.tripadvisor import TripAdvisorLocation
 from app.schemas.website import WebScrapedData
 from app.services.tripadvisor import TripAdvisorService, clean_name
@@ -36,6 +43,45 @@ def _normalize_phone(phone: str) -> str:
         logger.debug("Rejected phone outside E.164 range (%d digits): %s", len(digits), phone)
         return ""
     return f"+{digits}"
+
+_DUPLICATE_RE = re.compile(r"(\d+) already has that value")
+
+
+def _extract_conflicting_id(error_message: str) -> str | None:
+    """Extract the conflicting company ID from a HubSpot VALIDATION_ERROR."""
+    match = _DUPLICATE_RE.search(error_message)
+    return match.group(1) if match else None
+
+
+def _is_same_company(
+    props_a: HubSpotCompanyProperties,
+    props_b: HubSpotCompanyProperties,
+) -> bool:
+    """Check if two companies likely represent the same hotel."""
+    def _norm(s: str | None) -> str:
+        return (s or "").strip().lower()
+
+    name_a, name_b = _norm(props_a.name), _norm(props_b.name)
+    if not name_a or not name_b:
+        return False
+
+    # Name must match: exact, or one contains the other
+    names_match = name_a == name_b or name_a in name_b or name_b in name_a
+    if not names_match:
+        return False
+
+    # City must match (if both have values)
+    city_a, city_b = _norm(props_a.city), _norm(props_b.city)
+    if city_a and city_b and city_a != city_b:
+        return False
+
+    # Country must match (if both have values)
+    country_a, country_b = _norm(props_a.country), _norm(props_b.country)
+    if country_a and country_b and country_a != country_b:
+        return False
+
+    return True
+
 
 HUBSPOT_DELAY = 0.5  # seconds between HubSpot calls
 MAX_COMPANIES_PER_REQUEST = 1
@@ -285,9 +331,44 @@ class EnrichmentService:
         # Always clear agente
         updates["agente"] = ""
 
-        await self._hubspot.update_company(company.id, updates)
+        merge_info: tuple[str, str | None] | None = None  # (merged_id, merged_name)
+        conflict_info: tuple[str, str | None, str] | None = None  # (other_id, other_name, place_id)
 
-        # --- Create enrichment note ---
+        try:
+            await self._hubspot.update_company(company.id, updates)
+        except HubSpotError as exc:
+            conflict_id = _extract_conflicting_id(exc.message)
+            if not conflict_id or "id_hotel" not in exc.message:
+                raise
+
+            logger.warning("id_hotel conflict: %s vs %s", company.id, conflict_id)
+            place_id = updates.get("id_hotel", "")
+
+            try:
+                other = await self._hubspot.get_company(conflict_id)
+                if _is_same_company(props, other.properties):
+                    # Duplicate company — merge it
+                    await self._hubspot.merge_companies(company.id, conflict_id)
+                    logger.info("Merged duplicate %s into %s", conflict_id, company.id)
+                    merge_info = (conflict_id, other.properties.name)
+                    # Retry full update (id_hotel is now free)
+                    await self._hubspot.update_company(company.id, updates)
+                else:
+                    # Different companies share same Google Place
+                    conflict_info = (conflict_id, other.properties.name, place_id)
+                    updates.pop("id_hotel", None)
+                    await self._hubspot.update_company(company.id, updates)
+            except Exception:
+                logger.exception("Failed to resolve id_hotel conflict for %s", company.id)
+                # Last resort: drop id_hotel and continue
+                updates.pop("id_hotel", None)
+                try:
+                    await self._hubspot.update_company(company.id, updates)
+                except Exception:
+                    logger.exception("Failed to update company %s even without id_hotel", company.id)
+                    raise
+
+        # --- Create enrichment note (always) ---
         note_body = build_enrichment_note(
             props.name, place, ta_location, ta_photos=ta_photos,
             web_data=web_data, booking_data=booking_data,
@@ -299,6 +380,22 @@ class EnrichmentService:
                 "Failed to create note for company %s, enrichment still succeeded",
                 company.id,
             )
+
+        # --- Create merge/conflict note (if applicable) ---
+        if merge_info:
+            try:
+                merged_id, merged_name = merge_info
+                mn = build_merge_note(props.name, merged_id, merged_name)
+                await self._hubspot.create_note(company.id, mn)
+            except Exception:
+                logger.exception("Failed to create merge note for company %s", company.id)
+        elif conflict_info:
+            try:
+                other_id, other_name, pid = conflict_info
+                cn = build_conflict_note(props.name, other_id, other_name, pid)
+                await self._hubspot.create_note(company.id, cn)
+            except Exception:
+                logger.exception("Failed to create conflict note for company %s", company.id)
 
         # --- Create contacts from phone numbers and web data (best-effort) ---
         await self._create_contacts(company.id, props.name, place, ta_location, web_data)

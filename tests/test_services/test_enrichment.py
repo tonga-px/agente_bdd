@@ -15,7 +15,13 @@ from app.schemas.hubspot import (
 )
 from app.schemas.tripadvisor import TripAdvisorLocation
 from app.schemas.website import WebScrapedData
-from app.services.enrichment import EnrichmentService, _normalize_phone
+from app.exceptions.custom import HubSpotError
+from app.services.enrichment import (
+    EnrichmentService,
+    _extract_conflicting_id,
+    _is_same_company,
+    _normalize_phone,
+)
 from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
 
@@ -376,3 +382,197 @@ async def test_web_scraper_failure_doesnt_block(service, hubspot_mock):
 
     # Should not raise
     await service._create_contacts("C1", "Hotel Err", None, None, web)
+
+
+# --- _extract_conflicting_id tests ---
+
+
+def test_extract_conflicting_id():
+    msg = (
+        'Cannot set PropertyValueCoordinates{objectType=COMPANY, '
+        'propertyName=id_hotel, value=ChIJ123} on 48328838322. '
+        '51090765207 already has that value.'
+    )
+    assert _extract_conflicting_id(msg) == "51090765207"
+
+
+def test_extract_conflicting_id_no_match():
+    assert _extract_conflicting_id("some random error") is None
+    assert _extract_conflicting_id("") is None
+
+
+# --- _is_same_company tests ---
+
+
+def test_is_same_company_exact_match():
+    a = HubSpotCompanyProperties(name="Hotel Asunción", city="Asunción", country="Paraguay")
+    b = HubSpotCompanyProperties(name="Hotel Asunción", city="Asunción", country="Paraguay")
+    assert _is_same_company(a, b) is True
+
+
+def test_is_same_company_name_contains():
+    a = HubSpotCompanyProperties(name="Hotel X", city="Lima")
+    b = HubSpotCompanyProperties(name="Hotel X Boutique", city="Lima")
+    assert _is_same_company(a, b) is True
+
+
+def test_is_same_company_different_name():
+    a = HubSpotCompanyProperties(name="Hotel Sol", city="Lima")
+    b = HubSpotCompanyProperties(name="Hotel Luna", city="Lima")
+    assert _is_same_company(a, b) is False
+
+
+def test_is_same_company_different_city():
+    a = HubSpotCompanyProperties(name="Hotel Sol", city="Lima")
+    b = HubSpotCompanyProperties(name="Hotel Sol", city="Cusco")
+    assert _is_same_company(a, b) is False
+
+
+def test_is_same_company_empty_name():
+    a = HubSpotCompanyProperties(name=None, city="Lima")
+    b = HubSpotCompanyProperties(name="Hotel Sol", city="Lima")
+    assert _is_same_company(a, b) is False
+
+
+def test_is_same_company_case_insensitive():
+    a = HubSpotCompanyProperties(name="HOTEL SOL", city="Lima")
+    b = HubSpotCompanyProperties(name="hotel sol", city="lima")
+    assert _is_same_company(a, b) is True
+
+
+def test_is_same_company_missing_city_still_matches():
+    """If one side has no city, they can still match on name."""
+    a = HubSpotCompanyProperties(name="Hotel Sol", city="Lima")
+    b = HubSpotCompanyProperties(name="Hotel Sol", city=None)
+    assert _is_same_company(a, b) is True
+
+
+def test_is_same_company_different_country():
+    a = HubSpotCompanyProperties(name="Hotel Sol", country="Peru")
+    b = HubSpotCompanyProperties(name="Hotel Sol", country="Chile")
+    assert _is_same_company(a, b) is False
+
+
+# --- id_hotel conflict handling in _process_company ---
+
+
+@pytest.fixture
+def enrichment_service():
+    """EnrichmentService with AsyncMock dependencies for conflict tests."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+
+    return EnrichmentService(hubspot=hs, google_places=gp, overwrite=False), hs, gp
+
+
+def _company(company_id="48328838322", name="Hotel Sol", city="Lima", country="Peru"):
+    return HubSpotCompany(
+        id=company_id,
+        properties=HubSpotCompanyProperties(
+            name=name, city=city, country=country, agente="datos",
+        ),
+    )
+
+
+def _google_place(place_id="ChIJ_test"):
+    from app.schemas.google_places import DisplayName
+    return GooglePlace(
+        id=place_id,
+        displayName=DisplayName(text="Hotel Sol"),
+        formattedAddress="Calle 1, Lima, Peru",
+        addressComponents=[
+            {"longText": "Lima", "shortText": "Lima", "types": ["locality"]},
+            {"longText": "Peru", "shortText": "PE", "types": ["country"]},
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_id_hotel_conflict_merge(enrichment_service):
+    """VALIDATION_ERROR + same company → merge + retry update + enrichment completes."""
+    svc, hs, gp = enrichment_service
+
+    company = _company()
+    hs.get_company.return_value = _company(company_id="51090765207", name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    # First update_company call raises VALIDATION_ERROR, subsequent calls succeed
+    call_count = 0
+    async def _update_side_effect(cid, props):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:  # Second call is the enrichment update (first is pendiente)
+            raise HubSpotError(
+                'Cannot set id_hotel=ChIJ_test on 48328838322. 51090765207 already has that value.',
+                status_code=400,
+            )
+    hs.update_company.side_effect = _update_side_effect
+    hs.merge_companies.return_value = None
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    hs.merge_companies.assert_awaited_once_with("48328838322", "51090765207")
+    # Enrichment note + merge note = 2 notes created
+    assert hs.create_note.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_id_hotel_conflict_no_merge(enrichment_service):
+    """VALIDATION_ERROR + different company → no merge, id_hotel dropped, enrichment completes."""
+    svc, hs, gp = enrichment_service
+
+    company = _company()
+    hs.get_company.return_value = _company(company_id="51090765207", name="Hotel Luna", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    call_count = 0
+    async def _update_side_effect(cid, props):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise HubSpotError(
+                'Cannot set id_hotel=ChIJ_test on 48328838322. 51090765207 already has that value.',
+                status_code=400,
+            )
+    hs.update_company.side_effect = _update_side_effect
+    hs.merge_companies.return_value = None
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    hs.merge_companies.assert_not_awaited()
+    # Enrichment note + conflict note = 2 notes created
+    assert hs.create_note.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_id_hotel_conflict_merge_fails(enrichment_service):
+    """VALIDATION_ERROR + merge fails → drop id_hotel, enrichment still completes."""
+    svc, hs, gp = enrichment_service
+
+    company = _company()
+    hs.get_company.return_value = _company(company_id="51090765207", name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    call_count = 0
+    async def _update_side_effect(cid, props):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise HubSpotError(
+                'Cannot set id_hotel=ChIJ_test on 48328838322. 51090765207 already has that value.',
+                status_code=400,
+            )
+    hs.update_company.side_effect = _update_side_effect
+    hs.merge_companies.side_effect = HubSpotError("merge failed", status_code=400)
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    # Enrichment note still created (at least 1)
+    assert hs.create_note.await_count >= 1

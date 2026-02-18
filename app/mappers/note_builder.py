@@ -270,6 +270,44 @@ def _format_booking_section(booking: BookingData) -> str | None:
     return f"<h3>Booking.com</h3><ul>{''.join(rows)}</ul>"
 
 
+def build_merge_note(
+    company_name: str | None,
+    merged_id: str,
+    merged_name: str | None,
+) -> str:
+    """Note when a duplicate company was merged."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    title = escape(company_name or "Empresa")
+    return (
+        f"<h2>\U0001f501 Empresa Fusionada - {title}</h2>"
+        f"<p><em>Fecha: {now}</em></p>"
+        f"<ul>"
+        f"<li><strong>Empresa fusionada:</strong> {escape(merged_name or 'Desconocida')} (ID: {escape(merged_id)})</li>"
+        f"<li><strong>Resultado:</strong> Se detectó duplicado por id_hotel. La empresa {escape(merged_id)} fue fusionada en esta empresa.</li>"
+        f"</ul>"
+    )
+
+
+def build_conflict_note(
+    company_name: str | None,
+    other_id: str,
+    other_name: str | None,
+    place_id: str | None,
+) -> str:
+    """Note when id_hotel conflicts with a different company."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    title = escape(company_name or "Empresa")
+    return (
+        f"<h2>\u26a0\ufe0f Conflicto id_hotel - {title}</h2>"
+        f"<p><em>Fecha: {now}</em></p>"
+        f"<ul>"
+        f"<li><strong>Empresa conflictiva:</strong> {escape(other_name or 'Desconocida')} (ID: {escape(other_id)})</li>"
+        f"<li><strong>Google Place ID:</strong> {escape(place_id or 'N/A')}</li>"
+        f"<li><strong>Resultado:</strong> El id_hotel no se actualizó porque ya pertenece a otra empresa diferente.</li>"
+        f"</ul>"
+    )
+
+
 def build_error_note(
     agent_name: str,
     company_name: str | None,

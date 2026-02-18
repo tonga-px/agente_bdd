@@ -12,6 +12,7 @@ SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search"
 COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies"
 
 CALLS_URL = "https://api.hubapi.com/crm/v3/objects/calls"
+MERGE_URL = "https://api.hubapi.com/crm/v3/objects/companies/merge"
 FILES_URL = "https://api.hubapi.com/files/v3/files"
 NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
 CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
@@ -96,6 +97,21 @@ class HubSpotService:
 
         logger.info("Fetched company %s", company_id)
         return HubSpotCompany(**resp.json())
+
+    async def merge_companies(self, primary_id: str, merge_id: str) -> None:
+        """Merge merge_id INTO primary_id. The primary survives."""
+        resp = await self._client.post(
+            MERGE_URL,
+            json={"primaryObjectId": primary_id, "objectIdToMerge": merge_id},
+            headers=self._headers,
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Merged company %s into %s", merge_id, primary_id)
 
     async def update_company(
         self, company_id: str, properties: dict[str, str]

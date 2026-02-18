@@ -943,3 +943,119 @@ async def test_enrich_cooldown_rejects_recent(client):
     assert data2["status"] == "recently_completed"
     assert "job_id" in data2
     assert "finished_at" in data2
+
+
+HUBSPOT_MERGE_URL = "https://api.hubapi.com/crm/v3/objects/companies/merge"
+HUBSPOT_CONFLICT_COMPANY_URL = "https://api.hubapi.com/crm/v3/objects/companies/99999"
+
+
+@respx.mock
+async def test_enrich_id_hotel_conflict_still_enriches(client):
+    """VALIDATION_ERROR on id_hotel → detects conflict, resolves, enrichment still completes."""
+    respx.post(HUBSPOT_SEARCH_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "12345",
+                        "properties": {
+                            "name": "Hotel Asunción",
+                            "domain": None,
+                            "phone": None,
+                            "website": None,
+                            "address": None,
+                            "city": "Asunción",
+                            "state": None,
+                            "zip": None,
+                            "country": "Paraguay",
+                            "agente": "datos",
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock HubSpot GET for main company
+    _mock_get_company("12345", {
+        "name": "Hotel Asunción", "city": "Asunción", "country": "Paraguay", "agente": "datos",
+    })
+
+    # Mock HubSpot GET for conflicting company (same name → will trigger merge)
+    respx.get(HUBSPOT_CONFLICT_COMPANY_URL).mock(
+        return_value=Response(200, json={
+            "id": "99999",
+            "properties": {
+                "name": "Hotel Asunción",
+                "city": "Asunción",
+                "country": "Paraguay",
+            },
+        })
+    )
+
+    # Mock Google Places
+    respx.post(GOOGLE_PLACES_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "places": [
+                    {
+                        "id": "ChIJ_asuncion",
+                        "displayName": {"text": "Hotel Asunción"},
+                        "formattedAddress": "Calle 1, Asunción, Paraguay",
+                        "addressComponents": [
+                            {"longText": "Asunción", "shortText": "Asunción", "types": ["locality"]},
+                            {"longText": "Paraguay", "shortText": "PY", "types": ["country"]},
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+
+    # Mock TripAdvisor — no results
+    _mock_ta_empty()
+
+    # Mock merge
+    respx.post(HUBSPOT_MERGE_URL).mock(
+        return_value=Response(200, json={"id": "12345"})
+    )
+
+    # Mock HubSpot PATCH: first call (pendiente) OK, second (enrichment) fails with
+    # VALIDATION_ERROR, third (retry after merge) OK
+    patch_call_count = {"n": 0}
+
+    def _patch_side_effect(request):
+        patch_call_count["n"] += 1
+        body = json.loads(request.content)
+        if patch_call_count["n"] == 2:
+            # Second PATCH is the enrichment update — simulate id_hotel conflict
+            return Response(400, json={
+                "category": "VALIDATION_ERROR",
+                "message": "Cannot set id_hotel=ChIJ_asuncion on 12345. 99999 already has that value.",
+            })
+        return Response(200, json={})
+
+    respx.patch(HUBSPOT_COMPANY_URL).mock(side_effect=_patch_side_effect)
+
+    # Mock notes
+    _mock_notes()
+
+    job = await submit_and_wait(client)
+    assert job["status"] == "completed"
+
+    data = job["result"]
+    assert data["enriched"] == 1
+    assert data["errors"] == 0
+
+    result = data["results"][0]
+    assert result["status"] == "enriched"
+
+    # Verify merge was called
+    merge_calls = [c for c in respx.calls if "merge" in str(c.request.url)]
+    assert len(merge_calls) == 1
+
+    # Verify notes were created (enrichment note + merge note)
+    note_calls = [c for c in respx.calls if c.request.method == "POST" and "notes" in str(c.request.url)]
+    assert len(note_calls) >= 2
