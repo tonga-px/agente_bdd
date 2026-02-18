@@ -1,4 +1,4 @@
-"""Tests for InstagramService."""
+"""Tests for InstagramService (Perplexity-based)."""
 
 import json
 
@@ -8,32 +8,45 @@ import respx
 from httpx import Response
 
 from app.schemas.instagram import InstagramData
-from app.services.instagram import InstagramService, is_instagram_url, _extract_username
+from app.services.instagram import (
+    InstagramService,
+    is_instagram_url,
+    _extract_username,
+    _extract_phones,
+    _extract_emails,
+)
 
 
-_API_URL = "https://www.instagram.com/api/v1/users/web_profile_info/"
+_PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 
 
-def _profile_response(
-    username="hotelitapua",
+def _perplexity_response(data: dict) -> dict:
+    """Wrap data dict as a Perplexity chat completion response."""
+    return {
+        "choices": [
+            {"message": {"content": json.dumps(data)}}
+        ],
+    }
+
+
+def _ig_json(
     full_name="Hotel Itapúa",
     biography="Reservas: +595 21 123 4567",
     external_url=None,
     business_email=None,
-    business_phone_number=None,
+    business_phone=None,
     follower_count=1500,
-    bio_links=None,
+    whatsapp_url=None,
 ):
-    user = {
+    return {
         "full_name": full_name,
         "biography": biography,
         "external_url": external_url,
         "business_email": business_email,
-        "business_phone_number": business_phone_number,
-        "edge_followed_by": {"count": follower_count},
-        "bio_links": bio_links or [],
+        "business_phone": business_phone,
+        "follower_count": follower_count,
+        "whatsapp_url": whatsapp_url,
     }
-    return {"data": {"user": user}}
 
 
 @pytest.fixture
@@ -43,7 +56,7 @@ def client():
 
 @pytest.fixture
 def service(client):
-    return InstagramService(client)
+    return InstagramService(client, "test-api-key")
 
 
 # --- is_instagram_url ---
@@ -86,15 +99,40 @@ def test_extract_username_invalid():
     assert _extract_username("https://www.booking.com/hotel") is None
 
 
+# --- _extract_phones / _extract_emails ---
+
+
+def test_extract_phones_from_bio():
+    phones = _extract_phones("Tel: +595 21 123 4567 / +595 981 654 321", None)
+    assert "+595211234567" in phones
+    assert "+595981654321" in phones
+
+
+def test_extract_phones_dedup_business():
+    phones = _extract_phones("Tel: +595 21 123 4567", "+595211234567")
+    assert phones == []
+
+
+def test_extract_emails_from_bio():
+    emails = _extract_emails("Reservas: reservas@hotel.com | info@hotel.com", None)
+    assert "reservas@hotel.com" in emails
+    assert "info@hotel.com" in emails
+
+
+def test_extract_emails_dedup_business():
+    emails = _extract_emails("Email: contact@hotel.com", "contact@hotel.com")
+    assert emails == []
+
+
 # --- scrape ---
 
 
 @respx.mock
 @pytest.mark.asyncio
 async def test_scrape_profile(service):
-    """Basic profile scrape returns structured data."""
-    respx.get(_API_URL).mock(return_value=Response(
-        200, json=_profile_response(),
+    """Basic profile scrape via Perplexity returns structured data."""
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
+        200, json=_perplexity_response(_ig_json()),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -110,11 +148,11 @@ async def test_scrape_profile(service):
 @pytest.mark.asyncio
 async def test_scrape_with_bio_phones(service):
     """Phones in biography are extracted and normalized to E.164."""
-    respx.get(_API_URL).mock(return_value=Response(
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="Tel: +595 21 123 4567 / +595 981 654 321",
-        ),
+        )),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -127,11 +165,11 @@ async def test_scrape_with_bio_phones(service):
 @pytest.mark.asyncio
 async def test_scrape_with_bio_emails(service):
     """Emails in biography are extracted."""
-    respx.get(_API_URL).mock(return_value=Response(
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="Reservas: reservas@hotel.com | info@hotel.com",
-        ),
+        )),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -143,14 +181,14 @@ async def test_scrape_with_bio_emails(service):
 @respx.mock
 @pytest.mark.asyncio
 async def test_scrape_with_business_fields(service):
-    """Business email and phone from structured IG fields."""
-    respx.get(_API_URL).mock(return_value=Response(
+    """Business email and phone from Perplexity response."""
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="Bienvenidos",
             business_email="contact@hotel.com",
-            business_phone_number="+595211234567",
-        ),
+            business_phone="+595211234567",
+        )),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -163,12 +201,12 @@ async def test_scrape_with_business_fields(service):
 @pytest.mark.asyncio
 async def test_scrape_bio_phone_dedup_against_business(service):
     """Bio phone same as business_phone → not duplicated in bio_phones."""
-    respx.get(_API_URL).mock(return_value=Response(
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="Tel: +595 21 123 4567",
-            business_phone_number="+595211234567",
-        ),
+            business_phone="+595211234567",
+        )),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -181,12 +219,12 @@ async def test_scrape_bio_phone_dedup_against_business(service):
 @pytest.mark.asyncio
 async def test_scrape_bio_email_dedup_against_business(service):
     """Bio email same as business_email → not duplicated in bio_emails."""
-    respx.get(_API_URL).mock(return_value=Response(
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="Email: contact@hotel.com",
             business_email="contact@hotel.com",
-        ),
+        )),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -198,13 +236,13 @@ async def test_scrape_bio_email_dedup_against_business(service):
 @respx.mock
 @pytest.mark.asyncio
 async def test_scrape_with_whatsapp_wa_me(service):
-    """wa.me link in bio_links → WhatsApp number extracted."""
-    respx.get(_API_URL).mock(return_value=Response(
+    """wa.me URL in whatsapp_url → WhatsApp number extracted."""
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="Reservas por WhatsApp",
-            bio_links=[{"url": "https://wa.me/595981654321"}],
-        ),
+            whatsapp_url="https://wa.me/595981654321",
+        )),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -215,13 +253,13 @@ async def test_scrape_with_whatsapp_wa_me(service):
 @respx.mock
 @pytest.mark.asyncio
 async def test_scrape_with_whatsapp_external_url(service):
-    """wa.me in external_url → WhatsApp number extracted."""
-    respx.get(_API_URL).mock(return_value=Response(
+    """wa.me in external_url (no whatsapp_url) → WhatsApp number extracted."""
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="Reservas",
             external_url="https://wa.me/595981654321",
-        ),
+        )),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
@@ -233,16 +271,14 @@ async def test_scrape_with_whatsapp_external_url(service):
 @respx.mock
 @pytest.mark.asyncio
 async def test_scrape_with_whatsapp_wa_link(service):
-    """wa.link URL → follows redirect → extracts phone."""
-    # First: IG API response with wa.link
-    respx.get(_API_URL).mock(return_value=Response(
+    """wa.link URL in whatsapp_url → follows redirect → extracts phone."""
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200,
-        json=_profile_response(
+        json=_perplexity_response(_ig_json(
             biography="",
-            external_url="https://wa.link/abc123",
-        ),
+            whatsapp_url="https://wa.link/abc123",
+        )),
     ))
-    # Second: wa.link redirect
     respx.get("https://wa.link/abc123").mock(return_value=Response(
         301,
         headers={"location": "https://api.whatsapp.com/send?phone=595981654321"},
@@ -255,22 +291,25 @@ async def test_scrape_with_whatsapp_wa_link(service):
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_scrape_profile_not_found(service):
-    """404 → returns empty InstagramData with username."""
-    respx.get(_API_URL).mock(return_value=Response(404))
+async def test_scrape_perplexity_error(service):
+    """Perplexity API error → returns InstagramData with username only."""
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(500))
 
-    result = await service.scrape("https://www.instagram.com/nonexistent/")
+    result = await service.scrape("https://www.instagram.com/hotelitapua/")
 
-    assert result.username == "nonexistent"
+    assert result.username == "hotelitapua"
     assert result.full_name is None
     assert result.bio_phones == []
 
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_scrape_rate_limited(service):
-    """429 → returns empty InstagramData with username."""
-    respx.get(_API_URL).mock(return_value=Response(429))
+async def test_scrape_perplexity_bad_json(service):
+    """Perplexity returns non-JSON → returns InstagramData with username."""
+    respx.post(_PERPLEXITY_URL).mock(return_value=Response(
+        200,
+        json={"choices": [{"message": {"content": "I cannot access Instagram"}}]},
+    ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
 
@@ -280,28 +319,9 @@ async def test_scrape_rate_limited(service):
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_scrape_private_profile(service):
-    """Private profile with limited data → returns what's available."""
-    respx.get(_API_URL).mock(return_value=Response(
-        200,
-        json=_profile_response(
-            full_name="Hotel Privado",
-            biography="Solo reservas por DM",
-            follower_count=500,
-        ),
-    ))
-
-    result = await service.scrape("https://www.instagram.com/hotelprivado/")
-
-    assert result.full_name == "Hotel Privado"
-    assert result.follower_count == 500
-
-
-@respx.mock
-@pytest.mark.asyncio
 async def test_scrape_network_error(service):
     """Network error → returns empty InstagramData (never raises)."""
-    respx.get(_API_URL).mock(side_effect=httpx.ConnectError("Connection refused"))
+    respx.post(_PERPLEXITY_URL).mock(side_effect=httpx.ConnectError("Connection refused"))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
 
@@ -315,3 +335,18 @@ async def test_scrape_invalid_url(service):
     result = await service.scrape("https://www.booking.com/hotel/x")
 
     assert result.username is None
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_scrape_perplexity_sends_auth_header(service):
+    """Perplexity request includes Authorization header with API key."""
+    route = respx.post(_PERPLEXITY_URL).mock(return_value=Response(
+        200, json=_perplexity_response(_ig_json()),
+    ))
+
+    await service.scrape("https://www.instagram.com/hotelitapua/")
+
+    assert route.called
+    request = route.calls[0].request
+    assert request.headers["authorization"] == "Bearer test-api-key"

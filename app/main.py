@@ -54,11 +54,12 @@ async def lifespan(app: FastAPI):
             tripadvisor = TripAdvisorService(client, settings.tripadvisor_api_key)
 
         website_scraper = WebsiteScraperService(client)
-        instagram = InstagramService(client)
 
         perplexity: PerplexityService | None = None
+        instagram: InstagramService | None = None
         if settings.perplexity_api_key:
             perplexity = PerplexityService(client, settings.perplexity_api_key)
+            instagram = InstagramService(client, settings.perplexity_api_key)
 
         enrichment = EnrichmentService(
             hubspot, google_places, tripadvisor=tripadvisor,
