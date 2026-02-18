@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 import httpx
 import pytest
 from httpx import ASGITransport
@@ -19,14 +17,9 @@ def mock_env(monkeypatch):
 async def client(mock_env):
     from app.main import app, lifespan
 
-    # Prevent real DuckDuckGo searches in integration tests
-    async def _fake_to_thread(func, *args, **kwargs):
-        return []
-
     async with lifespan(app):
-        with patch("app.services.booking.asyncio.to_thread", side_effect=_fake_to_thread):
-            async with httpx.AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test",
-            ) as c:
-                yield c
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as c:
+            yield c

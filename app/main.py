@@ -29,7 +29,7 @@ from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
 from app.services.prospeccion import ProspeccionService
 from app.services.tripadvisor import TripAdvisorService
-from app.services.booking import BookingScraperService
+from app.services.perplexity import PerplexityService
 from app.services.website_scraper import WebsiteScraperService
 
 
@@ -53,11 +53,15 @@ async def lifespan(app: FastAPI):
             tripadvisor = TripAdvisorService(client, settings.tripadvisor_api_key)
 
         website_scraper = WebsiteScraperService(client)
-        booking_scraper = BookingScraperService(client)
+
+        perplexity: PerplexityService | None = None
+        if settings.perplexity_api_key:
+            perplexity = PerplexityService(client, settings.perplexity_api_key)
+
         enrichment = EnrichmentService(
             hubspot, google_places, tripadvisor=tripadvisor,
             website_scraper=website_scraper,
-            booking_scraper=booking_scraper,
+            perplexity=perplexity,
             overwrite=settings.overwrite_existing,
         )
 

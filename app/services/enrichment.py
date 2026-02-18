@@ -13,7 +13,7 @@ from app.mappers.note_builder import (
 )
 from app.schemas.booking import BookingData
 from app.schemas.responses import CompanyResult, EnrichmentResponse
-from app.services.booking import BookingScraperService
+from app.services.perplexity import PerplexityService
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
 from app.schemas.google_places import GooglePlace
@@ -94,14 +94,14 @@ class EnrichmentService:
         google_places: GooglePlacesService,
         tripadvisor: TripAdvisorService | None = None,
         website_scraper: WebsiteScraperService | None = None,
-        booking_scraper: BookingScraperService | None = None,
+        perplexity: PerplexityService | None = None,
         overwrite: bool = False,
     ):
         self._hubspot = hubspot
         self._google = google_places
         self._tripadvisor = tripadvisor
         self._website_scraper = website_scraper
-        self._booking_scraper = booking_scraper
+        self._perplexity = perplexity
         self._overwrite = overwrite
 
     async def resolve_next_company_id(self) -> str | None:
@@ -260,21 +260,20 @@ class EnrichmentService:
                         company.id,
                     )
 
-        # --- Booking.com scraping (isolated, never blocks enrichment) ---
+        # --- Booking.com via Perplexity (isolated, never blocks enrichment) ---
         booking_data: BookingData | None = None
-        if self._booking_scraper:
+        if self._perplexity:
             try:
-                booking_data = await self._booking_scraper.search_and_scrape(
+                booking_data = await self._perplexity.search_booking_data(
                     hotel_name=props.name or "",
                     city=props.city,
                     country=props.country,
-                    website_html=web_data.raw_html if web_data else None,
                 )
                 if not booking_data.rating and not booking_data.review_count:
                     booking_data = None
             except Exception:
                 logger.exception(
-                    "Booking scrape failed for company %s, continuing without it",
+                    "Perplexity search failed for company %s, continuing without it",
                     company.id,
                 )
 
