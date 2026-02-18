@@ -27,23 +27,24 @@ _WA_API_RE = re.compile(r"api\.whatsapp\.com/send\?phone=(\d+)")
 _JSON_RE = re.compile(r"\{[^{}]*\}")
 
 _SYSTEM_PROMPT = (
-    "You are a data extraction assistant for Instagram profiles. "
+    "You are a hotel data extraction assistant. "
     "Return ONLY valid JSON, no markdown fences, no explanation."
 )
 
 _USER_PROMPT_TEMPLATE = (
-    "Look at the public Instagram profile at "
-    "https://www.instagram.com/{username}/ "
-    "and extract contact information. "
+    "Search for the public Instagram profile @{username} "
+    "(https://www.instagram.com/{username}/) and find its contact information. "
+    "What is their display name, biography text, phone numbers, "
+    "email, WhatsApp link, and follower count? "
     "Return a JSON object with exactly these fields: "
     '"full_name" (profile display name or null), '
-    '"biography" (exact bio text or null), '
+    '"biography" (bio text or null), '
     '"external_url" (link in bio or null), '
-    '"business_email" (business contact email if visible, or null), '
-    '"business_phone" (business contact phone if visible, or null), '
+    '"business_email" (contact email or null), '
+    '"business_phone" (contact phone or null), '
     '"follower_count" (number of followers as integer, or null), '
-    '"whatsapp_url" (any WhatsApp link like wa.me/*, wa.link/*, '
-    "api.whatsapp.com/* found in the profile, or null). "
+    '"whatsapp_url" (any WhatsApp link wa.me/*, wa.link/*, '
+    "api.whatsapp.com/* or null). "
     "If a field is not available, use null."
 )
 
