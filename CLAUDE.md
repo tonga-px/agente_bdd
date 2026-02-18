@@ -11,7 +11,7 @@ pip install -e ".[dev]"
 # Run locally
 uvicorn app.main:app --reload --port 8000
 
-# Tests (263 total)
+# Tests (278 total)
 pytest
 pytest tests/test_services/test_enrichment.py -v          # single file
 pytest tests/test_services/test_enrichment.py::test_name  # single test
@@ -24,14 +24,14 @@ FastAPI async app deployed on Railway. Single web process, no DB, no background 
 
 **Two main flows:**
 
-1. **Enrichment** (`POST /datos` → 202, `POST /datos/sync` → 200): HubSpot search → set agente="pendiente" → Google Places text_search → TripAdvisor (optional) → website scraping (optional) → Booking.com scraping (optional) → mappers → HubSpot update (with id_hotel conflict handling) + note + contacts → agente=""
+1. **Enrichment** (`POST /datos` → 202, `POST /datos/sync` → 200): HubSpot search → set agente="pendiente" → Google Places text_search → TripAdvisor (optional) → website scraping (optional) → Booking.com via Perplexity (optional) → mappers → HubSpot update (with id_hotel conflict handling) + note + contacts → agente=""
 2. **Prospeccion** (`POST /llamada_prospeccion` → 202): HubSpot lookup → set agente="pendiente" → build phone list → ElevenLabs outbound call → poll for result → extract data → HubSpot update + note + decision-maker contact + call recording → agente=""
 
 Jobs are polled via `GET /jobs/{job_id}`. Duplicate jobs for the same task+company are rejected with 409.
 
 **Key patterns:**
 
-- **Graceful degradation**: TripAdvisor, website scraping, contact creation, call recording, id_hotel conflicts — all wrapped in try/except, failures logged but never block the main flow.
+- **Graceful degradation**: TripAdvisor, website scraping, Perplexity/Booking, contact creation, call recording, id_hotel conflicts — all wrapped in try/except, failures logged but never block the main flow.
 - **Smart merge**: only fills empty HubSpot fields. Exception: `id_hotel`, `name`, `city`, `state`, and `plaza` are always force-written from Google Places.
 - **id_hotel conflict handling**: when `update_company` fails with `VALIDATION_ERROR` because `id_hotel` already belongs to another company, enrichment detects the conflict via regex (`_extract_conflicting_id`), fetches the other company, compares with `_is_same_company` (name substring + city + country). If same company → `merge_companies` + retry update. If different → drop `id_hotel` and continue. Enrichment note always created; additional merge or conflict note appended. Falls back to dropping `id_hotel` on any failure.
 - **agente lifecycle**: `"datos"`/`"llamada_prospeccion"` → `"pendiente"` (immediately on start) → `""` (on completion or error). Prevents duplicate processing.
@@ -58,13 +58,14 @@ Jobs are polled via `GET /jobs/{job_id}`. Duplicate jobs for the same task+compa
 - **HubSpot associations**: notes→companies = 190, calls→companies = **182** (NOT 220)
 - **HubSpot merge API**: `POST /crm/v3/objects/companies/merge` with `primaryObjectId` + `objectIdToMerge`. Used to merge duplicate companies detected via id_hotel conflict.
 - **HubSpot Files API**: `folderPath` is a separate form field, NOT inside the `options` JSON
+- **Booking.com via Perplexity**: replaced DuckDuckGo search + HTML scraping with a single Perplexity Sonar API call. `PerplexityService.search_booking_data()` asks for structured JSON (url, rating, review_count, hotel_name) and parses the response. Returns `BookingData` schema unchanged. `app/services/booking.py` still exists but is no longer used in the main flow.
 - **Mappers** (`app/mappers/`) are pure functions — no I/O, no side effects, easy to test
 - **Schemas** use modern `str | None` syntax (Python 3.11+), Pydantic BaseModel throughout
 
 ## Environment variables
 
 Required: `HUBSPOT_ACCESS_TOKEN`, `GOOGLE_PLACES_API_KEY`
-Optional: `TRIPADVISOR_API_KEY` (empty string disables), `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_PHONE_NUMBER_ID`, `OVERWRITE_EXISTING` (default false), `LOG_LEVEL` (default INFO)
+Optional: `TRIPADVISOR_API_KEY` (empty string disables), `PERPLEXITY_API_KEY` (empty string disables Booking.com search), `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_PHONE_NUMBER_ID`, `OVERWRITE_EXISTING` (default false), `LOG_LEVEL` (default INFO)
 
 ## Deployment
 
