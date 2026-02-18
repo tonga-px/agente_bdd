@@ -345,6 +345,9 @@ class EnrichmentService:
             if self._overwrite or not (props.id_tripadvisor and props.id_tripadvisor.strip()):
                 updates["id_tripadvisor"] = ta_location.location_id
 
+        if booking_data and booking_data.url:
+            updates["booking_url"] = booking_data.url
+
         # Always clear agente
         updates["agente"] = ""
 
