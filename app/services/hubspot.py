@@ -446,7 +446,7 @@ class HubSpotService:
         if resp.status_code >= 400:
             raise HubSpotError(resp.text, status_code=resp.status_code)
 
-        ids = [r["toObjectId"] for r in resp.json().get("results", [])]
+        ids = [str(r["toObjectId"]) for r in resp.json().get("results", [])]
         logger.info("Task %s associated with companies: %s", task_id, ids)
         return ids
 
