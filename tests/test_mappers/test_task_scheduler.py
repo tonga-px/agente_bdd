@@ -7,11 +7,15 @@ import pytest
 
 from app.mappers.task_scheduler import (
     TASK_AGENT_PREFIX,
+    build_hacer_tareas_note,
     build_task_body,
     build_task_subject,
     compute_task_due_date,
     get_timezone,
+    is_business_day,
+    is_business_hour,
     next_business_day,
+    parse_task_agente,
     random_business_time,
 )
 
@@ -189,3 +193,127 @@ def test_build_task_body_partial():
     assert "company_id: 456" in body
     assert "N/A" in body
     assert "country: Chile" in body
+
+
+# --- parse_task_agente ---
+
+
+def test_parse_task_agente_calificar_lead():
+    assert parse_task_agente("Agente:calificar_lead | Hotel ABC") == "calificar_lead"
+
+
+def test_parse_task_agente_datos():
+    assert parse_task_agente("Agente:datos | Hotel XYZ") == "datos"
+
+
+def test_parse_task_agente_no_hotel_part():
+    assert parse_task_agente("Agente:calificar_lead") == "calificar_lead"
+
+
+def test_parse_task_agente_not_agent_task():
+    assert parse_task_agente("Tarea normal") is None
+
+
+def test_parse_task_agente_empty():
+    assert parse_task_agente("") is None
+
+
+def test_parse_task_agente_none():
+    assert parse_task_agente(None) is None
+
+
+def test_parse_task_agente_prefix_only():
+    assert parse_task_agente("Agente:") is None
+
+
+# --- is_business_hour ---
+
+
+def test_is_business_hour_within_hours():
+    """10:00 local → True."""
+    # Paraguay is UTC-3; 13:00 UTC = 10:00 PYT
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+    assert is_business_hour("Paraguay", now) is True
+
+
+def test_is_business_hour_before_nine():
+    """8:00 local → False."""
+    # 11:00 UTC = 8:00 PYT
+    now = datetime(2026, 2, 17, 11, 0, tzinfo=timezone.utc)
+    assert is_business_hour("Paraguay", now) is False
+
+
+def test_is_business_hour_at_nine():
+    """9:00 local → True (inclusive)."""
+    # 12:00 UTC = 9:00 PYT
+    now = datetime(2026, 2, 17, 12, 0, tzinfo=timezone.utc)
+    assert is_business_hour("Paraguay", now) is True
+
+
+def test_is_business_hour_at_seventeen():
+    """17:00 local → False (exclusive)."""
+    # 20:00 UTC = 17:00 PYT
+    now = datetime(2026, 2, 17, 20, 0, tzinfo=timezone.utc)
+    assert is_business_hour("Paraguay", now) is False
+
+
+def test_is_business_hour_at_sixteen_fifty_nine():
+    """16:59 local → True."""
+    # 19:59 UTC = 16:59 PYT
+    now = datetime(2026, 2, 17, 19, 59, tzinfo=timezone.utc)
+    assert is_business_hour("Paraguay", now) is True
+
+
+def test_is_business_hour_none_country_uses_utc():
+    now = datetime(2026, 2, 17, 12, 0, tzinfo=timezone.utc)
+    assert is_business_hour(None, now) is True
+
+
+# --- is_business_day ---
+
+
+def test_is_business_day_weekday():
+    """Tuesday → True."""
+    now = datetime(2026, 2, 17, 12, 0, tzinfo=timezone.utc)  # Tuesday
+    assert is_business_day("Paraguay", now) is True
+
+
+def test_is_business_day_saturday():
+    """Saturday → False."""
+    now = datetime(2026, 2, 21, 12, 0, tzinfo=timezone.utc)  # Saturday
+    assert is_business_day("Paraguay", now) is False
+
+
+def test_is_business_day_sunday():
+    """Sunday → False."""
+    now = datetime(2026, 2, 22, 12, 0, tzinfo=timezone.utc)  # Sunday
+    assert is_business_day("Paraguay", now) is False
+
+
+def test_is_business_day_holiday():
+    """May 1 (Labour Day in Paraguay) → False."""
+    now = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    assert is_business_day("Paraguay", now) is False
+
+
+def test_is_business_day_none_country():
+    """None country → only checks weekday (no holiday check)."""
+    # May 1 is a Friday in 2026
+    now = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    assert is_business_day(None, now) is True
+
+
+def test_is_business_day_unknown_country():
+    """Unknown country → only checks weekday (no holiday check)."""
+    now = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    assert is_business_day("Narnia", now) is True
+
+
+# --- build_hacer_tareas_note ---
+
+
+def test_build_hacer_tareas_note():
+    note = build_hacer_tareas_note("calificar_lead", "Agente:calificar_lead | Hotel ABC")
+    assert "calificar_lead" in note
+    assert "Agente:calificar_lead | Hotel ABC" in note
+    assert note.startswith("Hacer Tareas:")

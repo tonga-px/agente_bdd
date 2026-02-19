@@ -22,9 +22,11 @@ from app.exceptions.handlers import (
     tripadvisor_error_handler,
 )
 from app.routers.enrichment import router as enrichment_router
+from app.routers.hacer_tareas import router as hacer_tareas_router
 from app.routers.prospeccion import router as prospeccion_router
 from app.services.elevenlabs import ElevenLabsService
 from app.services.enrichment import EnrichmentService
+from app.services.hacer_tareas import HacerTareasService
 from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
 from app.services.prospeccion import ProspeccionService
@@ -68,6 +70,7 @@ async def lifespan(app: FastAPI):
         )
 
         app.state.enrichment_service = enrichment
+        app.state.hacer_tareas_service = HacerTareasService(hubspot)
         app.state.job_store = JobStore()
 
         # ElevenLabs + Prospeccion (conditional, like TripAdvisor)
@@ -96,4 +99,5 @@ app.add_exception_handler(ElevenLabsError, elevenlabs_error_handler)
 app.add_exception_handler(RateLimitError, rate_limit_error_handler)
 
 app.include_router(enrichment_router)
+app.include_router(hacer_tareas_router)
 app.include_router(prospeccion_router)

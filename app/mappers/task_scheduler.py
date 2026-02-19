@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import holidays
 
 TASK_AGENT_PREFIX = "Agente:calificar_lead"
+AGENT_SUBJECT_PREFIX = "Agente:"
 
 # Country name (lowercase) → IANA timezone
 COUNTRY_TIMEZONES: dict[str, str] = {
@@ -131,6 +132,61 @@ def build_task_subject(company_name: str | None) -> str:
     """Build task subject with agent prefix."""
     name = (company_name or "").strip() or "Sin nombre"
     return f"{TASK_AGENT_PREFIX} | {name}"
+
+
+def parse_task_agente(subject: str) -> str | None:
+    """Extract agent value from task subject.
+
+    "Agente:calificar_lead | Hotel ABC" → "calificar_lead"
+    "Agente:datos | Hotel XYZ"          → "datos"
+    "Tarea normal"                        → None
+    """
+    if not subject or not subject.startswith(AGENT_SUBJECT_PREFIX):
+        return None
+    after_prefix = subject[len(AGENT_SUBJECT_PREFIX):]
+    # Take everything before " | " (or the whole thing if no separator)
+    agente_part = after_prefix.split(" | ", 1)[0].strip()
+    return agente_part or None
+
+
+def is_business_hour(country: str | None, now: datetime | None = None) -> bool:
+    """Check if current time is within 9:00-17:00 in the country's local timezone."""
+    tz = get_timezone(country)
+    if now is None:
+        now = datetime.now(timezone.utc)
+    local_now = now.astimezone(tz)
+    return 9 <= local_now.hour < 17
+
+
+def is_business_day(country: str | None, now: datetime | None = None) -> bool:
+    """Check if today is a business day (Mon-Fri, not a holiday) in the country."""
+    tz = get_timezone(country)
+    if now is None:
+        now = datetime.now(timezone.utc)
+    local_now = now.astimezone(tz)
+    local_date = local_now.date()
+
+    # Weekend check
+    if local_date.weekday() >= 5:
+        return False
+
+    # Holiday check
+    if country:
+        iso_code = COUNTRY_HOLIDAYS.get(country.strip().lower())
+        if iso_code:
+            year_holidays = holidays.country_holidays(iso_code, years=local_date.year)
+            if local_date in year_holidays:
+                return False
+
+    return True
+
+
+def build_hacer_tareas_note(agente_value: str, task_subject: str) -> str:
+    """Build note body for the hacer_tareas agent."""
+    return (
+        f"Hacer Tareas: se activó agente '{agente_value}'\n"
+        f"Tarea: {task_subject}"
+    )
 
 
 def build_task_body(

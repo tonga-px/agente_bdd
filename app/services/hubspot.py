@@ -18,6 +18,8 @@ NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
 TASKS_URL = "https://api.hubapi.com/crm/v3/objects/tasks"
 CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 EMAILS_URL = "https://api.hubapi.com/crm/v3/objects/emails"
+TASKS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/tasks/search"
+TASK_ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/tasks"
 ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/companies"
 
 CONTACT_PROPERTIES = [
@@ -381,3 +383,78 @@ class HubSpotService:
         task_id = resp.json().get("id", "")
         logger.info("Created task %s for company %s", task_id, company_id)
         return task_id
+
+    async def search_tasks(self, limit: int = 100) -> list[dict]:
+        """Search for open tasks with hs_timestamp <= now.
+
+        Returns raw task dicts (id + properties). Client-side filtering
+        for "Agente:" prefix is done by the caller because HubSpot's
+        tokenization of CONTAINS_TOKEN is unpredictable.
+        """
+        now_ms = str(int(datetime.now(timezone.utc).timestamp() * 1000))
+        payload = {
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "hs_task_status",
+                            "operator": "NOT_IN",
+                            "values": ["COMPLETED"],
+                        },
+                        {
+                            "propertyName": "hs_timestamp",
+                            "operator": "LTE",
+                            "value": now_ms,
+                        },
+                    ]
+                }
+            ],
+            "properties": [
+                "hs_task_subject",
+                "hs_task_body",
+                "hs_task_status",
+                "hs_timestamp",
+            ],
+            "limit": limit,
+        }
+
+        resp = await self._client.post(
+            TASKS_SEARCH_URL, json=payload, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        results = resp.json().get("results", [])
+        logger.info("Found %d open tasks with hs_timestamp <= now", len(results))
+        return results
+
+    async def get_task_company_ids(self, task_id: str) -> list[str]:
+        """Get company IDs associated with a task (association type 192)."""
+        url = f"{TASK_ASSOCIATIONS_URL}/{task_id}/associations/companies"
+        resp = await self._client.get(url, headers=self._headers)
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        ids = [r["toObjectId"] for r in resp.json().get("results", [])]
+        logger.info("Task %s associated with companies: %s", task_id, ids)
+        return ids
+
+    async def update_task(self, task_id: str, properties: dict[str, str]) -> None:
+        """Update task properties (e.g. status, hs_timestamp)."""
+        url = f"{TASKS_URL}/{task_id}"
+        resp = await self._client.patch(
+            url, json={"properties": properties}, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Updated task %s", task_id)

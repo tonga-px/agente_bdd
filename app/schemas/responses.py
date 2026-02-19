@@ -56,6 +56,24 @@ class ProspeccionResponse(BaseModel):
     note: str | None = None
 
 
+class TaskResult(BaseModel):
+    task_id: str
+    task_subject: str
+    company_id: str | None = None
+    agente_value: str
+    status: str  # "activated" | "skipped" | "rescheduled" | "error"
+    message: str | None = None
+
+
+class HacerTareasResponse(BaseModel):
+    total_found: int
+    activated: int
+    skipped: int
+    rescheduled: int
+    errors: int
+    results: list[TaskResult]
+
+
 class JobSubmittedResponse(BaseModel):
     job_id: str
     status: str
@@ -68,5 +86,5 @@ class JobStatusResponse(BaseModel):
     created_at: datetime
     finished_at: datetime | None = None
     company_id: str | None = None
-    result: EnrichmentResponse | ProspeccionResponse | None = None
+    result: EnrichmentResponse | ProspeccionResponse | HacerTareasResponse | None = None
     error: str | None = None

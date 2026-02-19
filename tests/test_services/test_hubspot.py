@@ -9,6 +9,8 @@ from app.services.hubspot import (
     CONTACTS_URL,
     EMAILS_URL,
     MERGE_URL,
+    TASK_ASSOCIATIONS_URL,
+    TASKS_SEARCH_URL,
     TASKS_URL,
     HubSpotService,
 )
@@ -319,3 +321,157 @@ async def test_create_task_error():
             await service.create_task(COMPANY_ID, {"hs_task_subject": "test"})
 
     assert exc_info.value.status_code == 400
+
+
+# --- search_tasks tests ---
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_search_tasks_success():
+    respx.post(TASKS_SEARCH_URL).mock(
+        return_value=Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "t1",
+                        "properties": {
+                            "hs_task_subject": "Agente:calificar_lead | Hotel Sol",
+                            "hs_task_status": "NOT_STARTED",
+                            "hs_timestamp": "1740000000000",
+                        },
+                    },
+                    {
+                        "id": "t2",
+                        "properties": {
+                            "hs_task_subject": "Tarea manual",
+                            "hs_task_status": "NOT_STARTED",
+                            "hs_timestamp": "1740000000000",
+                        },
+                    },
+                ]
+            },
+        )
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        tasks = await service.search_tasks()
+
+    assert len(tasks) == 2
+    assert tasks[0]["id"] == "t1"
+    assert tasks[1]["id"] == "t2"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_search_tasks_empty():
+    respx.post(TASKS_SEARCH_URL).mock(
+        return_value=Response(200, json={"results": []})
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        tasks = await service.search_tasks()
+
+    assert tasks == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_search_tasks_error():
+    respx.post(TASKS_SEARCH_URL).mock(
+        return_value=Response(400, text="bad request")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        with pytest.raises(HubSpotError):
+            await service.search_tasks()
+
+
+# --- get_task_company_ids tests ---
+
+
+TASK_ASSOC_URL = f"{TASK_ASSOCIATIONS_URL}/t1/associations/companies"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_task_company_ids_success():
+    respx.get(TASK_ASSOC_URL).mock(
+        return_value=Response(
+            200,
+            json={"results": [{"toObjectId": "c1"}, {"toObjectId": "c2"}]},
+        )
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        ids = await service.get_task_company_ids("t1")
+
+    assert ids == ["c1", "c2"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_task_company_ids_empty():
+    respx.get(TASK_ASSOC_URL).mock(
+        return_value=Response(200, json={"results": []})
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        ids = await service.get_task_company_ids("t1")
+
+    assert ids == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_task_company_ids_error():
+    respx.get(TASK_ASSOC_URL).mock(
+        return_value=Response(404, text="not found")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        with pytest.raises(HubSpotError):
+            await service.get_task_company_ids("t1")
+
+
+# --- update_task tests ---
+
+
+TASK_ENDPOINT = f"{TASKS_URL}/t1"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_task_success():
+    respx.patch(TASK_ENDPOINT).mock(
+        return_value=Response(200, json={"id": "t1"})
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        await service.update_task("t1", {"hs_task_status": "COMPLETED"})
+
+    import json
+    req = respx.calls.last.request
+    body = json.loads(req.content)
+    assert body["properties"]["hs_task_status"] == "COMPLETED"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_task_error():
+    respx.patch(TASK_ENDPOINT).mock(
+        return_value=Response(400, text="bad request")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        with pytest.raises(HubSpotError):
+            await service.update_task("t1", {"hs_task_status": "COMPLETED"})
