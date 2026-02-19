@@ -450,8 +450,8 @@ async def test_search_instagram_profile_api_error(service, tavily_client_mock):
 
 
 @pytest.mark.asyncio
-async def test_search_instagram_profile_uses_domains_filter(service, tavily_client_mock):
-    """Search passes include_domains=["instagram.com"]."""
+async def test_search_instagram_profile_uses_advanced_search(service, tavily_client_mock):
+    """Search uses advanced depth and profile URL in query."""
     tavily_client_mock.search.return_value = {
         "answer": "Some data",
         "results": [],
@@ -461,7 +461,8 @@ async def test_search_instagram_profile_uses_domains_filter(service, tavily_clie
 
     tavily_client_mock.search.assert_awaited_once()
     call_kwargs = tavily_client_mock.search.call_args
-    assert call_kwargs.kwargs.get("include_domains") == ["instagram.com"]
+    assert "instagram.com/hotelsol" in call_kwargs.kwargs.get("query", "")
+    assert call_kwargs.kwargs.get("search_depth") == "advanced"
 
 
 # --- extract_website: instagram_url detection ---

@@ -363,7 +363,7 @@ class TavilyService:
         try:
             result = await self._client.extract(urls=[profile_url])
             content = self._get_extract_content(result)
-            if content:
+            if content and "base64," not in content[:500]:
                 logger.info(
                     "Tavily extracted %d chars from Instagram %s",
                     len(content), profile_url,
@@ -381,16 +381,17 @@ class TavilyService:
         hotel_name: str | None = None,
         city: str | None = None,
     ) -> str | None:
-        """Tavily Search with include_domains=["instagram.com"]. Returns combined text or None."""
+        """Tavily Search for Instagram profile contact info. Returns combined text or None."""
         try:
-            context_parts = [p for p in (hotel_name, city) if p]
-            context = " ".join(context_parts)
-            query = f"@{username} Instagram {context}".strip()
+            profile_url = f"https://www.instagram.com/{username}/"
+            query = (
+                f"email telefono whatsapp de {profile_url}"
+            )
 
             result = await self._client.search(
                 query=query,
-                include_domains=["instagram.com"],
-                max_results=3,
+                search_depth="advanced",
+                max_results=5,
                 include_answer=True,
             )
 
