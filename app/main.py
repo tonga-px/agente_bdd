@@ -56,15 +56,13 @@ async def lifespan(app: FastAPI):
         website_scraper = WebsiteScraperService(client)
 
         perplexity: PerplexityService | None = None
-        instagram: InstagramService | None = None
         if settings.perplexity_api_key:
             perplexity = PerplexityService(client, settings.perplexity_api_key)
-            instagram = InstagramService(client, settings.perplexity_api_key)
 
         enrichment = EnrichmentService(
             hubspot, google_places, tripadvisor=tripadvisor,
             website_scraper=website_scraper,
-            instagram=instagram,
+            instagram=None,
             perplexity=perplexity,
             overwrite=settings.overwrite_existing,
         )
