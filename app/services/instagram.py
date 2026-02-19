@@ -28,7 +28,9 @@ _JSON_RE = re.compile(r"\{[^{}]*\}")
 
 _SYSTEM_PROMPT = (
     "You are a hotel research assistant. "
-    "Return ONLY valid JSON, no markdown fences, no explanation."
+    "Return ONLY valid JSON, no markdown fences, no explanation. "
+    "Only include data you find directly in search results. "
+    "Never guess, infer, or fabricate any values."
 )
 
 _USER_PROMPT_TEMPLATE = (
@@ -40,7 +42,8 @@ _USER_PROMPT_TEMPLATE = (
     '"full_name", "biography", "external_url", "business_email", '
     '"business_phone", "follower_count", '
     '"whatsapp_url" (wa.me or wa.link URL if found). '
-    'Use null for any field you cannot find.'
+    'Use null for any field you cannot find in the search results. '
+    'Do NOT guess or make up values — accuracy is critical.'
 )
 
 
@@ -124,6 +127,41 @@ def _try_parse_json(text: str) -> dict | None:
 def _is_all_null(parsed: dict) -> bool:
     """Check if all values in a parsed Perplexity response are None/null."""
     return all(v is None for v in parsed.values())
+
+
+def _values_match(field: str, a, b) -> bool:
+    """Check if two field values match for cross-validation."""
+    if field in ("business_phone", "whatsapp_url"):
+        # Compare digits only (phone formatting varies)
+        da = "".join(c for c in str(a) if c.isdigit())
+        db = "".join(c for c in str(b) if c.isdigit())
+        return da == db
+    if field == "business_email":
+        return str(a).strip().lower() == str(b).strip().lower()
+    if field == "full_name":
+        return str(a).strip().lower() == str(b).strip().lower()
+    if field == "biography":
+        return True  # bio text varies in formatting, skip validation
+    # exact match for follower_count, external_url, etc.
+    return a == b
+
+
+def _cross_validate(a: dict, b: dict) -> dict:
+    """Keep fields that agree between two responses; drop disagreements."""
+    result: dict = {}
+    for key in set(a) | set(b):
+        va, vb = a.get(key), b.get(key)
+        if va is None and vb is None:
+            result[key] = None
+        elif va is None or vb is None:
+            # One found it, the other didn't — keep the found value
+            result[key] = va if va is not None else vb
+        elif _values_match(key, va, vb):
+            result[key] = va  # they agree
+        else:
+            logger.info("Cross-validation mismatch for %s: %r vs %r", key, va, vb)
+            result[key] = None  # disagreement → likely hallucinated
+    return result
 
 
 class InstagramService:
@@ -214,69 +252,101 @@ class InstagramService:
             whatsapp=whatsapp,
         )
 
-    _MAX_RETRIES = 3
+    _MAX_ATTEMPTS = 3
+
+    async def _single_perplexity_call(self, username: str, prompt: str) -> dict | None:
+        """Make a single Perplexity API call. Returns parsed dict or None on error."""
+        try:
+            resp = await self._client.post(
+                _PERPLEXITY_URL,
+                json={
+                    "model": _PERPLEXITY_MODEL,
+                    "messages": [
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "search_domain_filter": ["instagram.com"],
+                    "temperature": 0,
+                },
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+        except (httpx.HTTPError, httpx.TimeoutException):
+            logger.exception("Perplexity API call failed for Instagram %s", username)
+            return None
+
+        data = resp.json()
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError):
+            logger.warning("Unexpected Perplexity response for Instagram %s", username)
+            return None
+
+        logger.info("Perplexity raw response for Instagram %s: %s", username, content[:500])
+
+        parsed = _try_parse_json(content)
+        if not parsed:
+            logger.warning("Could not parse JSON from Perplexity for Instagram %s", username)
+            return None
+
+        return parsed
 
     async def _call_perplexity(
         self, username: str, profile_url: str, prompt: str,
     ) -> dict | None:
-        """Call Perplexity API, retrying up to _MAX_RETRIES times if all fields are null."""
+        """Call Perplexity up to _MAX_ATTEMPTS times, cross-validating 2 non-null responses."""
         import asyncio
 
-        for attempt in range(1, self._MAX_RETRIES + 1):
-            try:
-                resp = await self._client.post(
-                    _PERPLEXITY_URL,
-                    json={
-                        "model": _PERPLEXITY_MODEL,
-                        "messages": [
-                            {"role": "system", "content": _SYSTEM_PROMPT},
-                            {"role": "user", "content": prompt},
-                        ],
-                        "search_domain_filter": ["instagram.com"],
-                    },
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-            except (httpx.HTTPError, httpx.TimeoutException):
-                logger.exception(
-                    "Perplexity API call failed for Instagram %s (attempt %d/%d)",
-                    username, attempt, self._MAX_RETRIES,
-                )
-                return None
+        responses: list[dict] = []
+        last_parsed: dict | None = None
 
-            data = resp.json()
-            try:
-                content = data["choices"][0]["message"]["content"]
-            except (KeyError, IndexError):
-                logger.warning("Unexpected Perplexity response for Instagram %s", username)
-                return None
+        for attempt in range(1, self._MAX_ATTEMPTS + 1):
+            parsed = await self._single_perplexity_call(username, prompt)
+            if parsed is None:
+                return None  # API/parse error, not retryable
 
-            logger.info("Perplexity raw response for Instagram %s: %s", username, content[:500])
+            last_parsed = parsed
 
-            parsed = _try_parse_json(content)
-            if not parsed:
-                logger.warning("Could not parse JSON from Perplexity for Instagram %s", username)
-                return None
-
-            if not _is_all_null(parsed) or attempt == self._MAX_RETRIES:
-                if _is_all_null(parsed):
+            if _is_all_null(parsed):
+                if attempt < self._MAX_ATTEMPTS:
+                    logger.info(
+                        "Perplexity returned all-null for Instagram %s, retrying (%d/%d)",
+                        username, attempt, self._MAX_ATTEMPTS,
+                    )
+                    await asyncio.sleep(1)
+                else:
                     logger.warning(
                         "Perplexity returned all-null for Instagram %s after %d attempts",
-                        username, self._MAX_RETRIES,
+                        username, self._MAX_ATTEMPTS,
                     )
-                return parsed
+                continue
 
+            responses.append(parsed)
+            if len(responses) >= 2:
+                break
+
+            # Need one more for cross-validation
+            if attempt < self._MAX_ATTEMPTS:
+                await asyncio.sleep(1)
+
+        if len(responses) >= 2:
+            validated = _cross_validate(responses[0], responses[1])
+            logger.info("Cross-validated Instagram %s data from 2 responses", username)
+            return validated
+
+        if responses:
             logger.info(
-                "Perplexity returned all-null for Instagram %s, retrying (%d/%d)",
-                username, attempt, self._MAX_RETRIES,
+                "Only 1 non-null response for Instagram %s, skipping cross-validation",
+                username,
             )
-            await asyncio.sleep(1)
+            return responses[0]
 
-        return None  # unreachable, but keeps mypy happy
+        # All attempts returned all-null
+        return last_parsed
 
     async def _resolve_whatsapp(self, urls: list[str]) -> str | None:
         """Extract WhatsApp number from wa.me, api.whatsapp.com, or wa.link URLs."""

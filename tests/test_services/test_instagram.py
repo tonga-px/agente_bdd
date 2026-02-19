@@ -10,7 +10,9 @@ from httpx import Response
 from app.schemas.instagram import InstagramData
 from app.services.instagram import (
     InstagramService,
+    _cross_validate,
     _is_all_null,
+    _values_match,
     is_instagram_url,
     _extract_username,
     _extract_phones,
@@ -382,15 +384,16 @@ def _all_null_json():
 @respx.mock
 @pytest.mark.asyncio
 async def test_scrape_retries_on_all_null_then_succeeds(service):
-    """First call returns all-null, second returns data → uses second result."""
+    """First call returns all-null, next two return data → cross-validated."""
     route = respx.post(_PERPLEXITY_URL).mock(side_effect=[
         Response(200, json=_perplexity_response(_all_null_json())),
+        Response(200, json=_perplexity_response(_ig_json())),
         Response(200, json=_perplexity_response(_ig_json())),
     ])
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
 
-    assert route.call_count == 2
+    assert route.call_count == 3
     assert result.full_name == "Hotel Itapúa"
     assert result.follower_count == 1500
 
@@ -414,13 +417,143 @@ async def test_scrape_retries_max_3_times(service):
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_scrape_no_retry_when_data_present(service):
-    """First call returns data → no retry."""
+async def test_scrape_two_calls_for_cross_validation(service):
+    """Data present on first call → makes second call for cross-validation."""
     route = respx.post(_PERPLEXITY_URL).mock(return_value=Response(
         200, json=_perplexity_response(_ig_json()),
     ))
 
     result = await service.scrape("https://www.instagram.com/hotelitapua/")
 
-    assert route.call_count == 1
+    assert route.call_count == 2
     assert result.full_name == "Hotel Itapúa"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_scrape_cross_validation_drops_mismatched_fields(service):
+    """Fields that disagree between two calls are set to None."""
+    route = respx.post(_PERPLEXITY_URL).mock(side_effect=[
+        Response(200, json=_perplexity_response(_ig_json(
+            business_phone="+595211234567",
+            whatsapp_url="https://wa.me/595981111111",
+            follower_count=1500,
+        ))),
+        Response(200, json=_perplexity_response(_ig_json(
+            business_phone="+595219999999",
+            whatsapp_url="https://wa.me/595989999999",
+            follower_count=12500,
+        ))),
+    ])
+
+    result = await service.scrape("https://www.instagram.com/hotelitapua/")
+
+    assert route.call_count == 2
+    assert result.full_name == "Hotel Itapúa"  # same in both → kept
+    assert result.business_phone is None  # disagreed → dropped
+    assert result.whatsapp is None  # disagreed → dropped
+    assert result.follower_count is None  # disagreed → dropped
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_scrape_cross_validation_keeps_matching_fields(service):
+    """Fields that agree between two calls are kept."""
+    route = respx.post(_PERPLEXITY_URL).mock(side_effect=[
+        Response(200, json=_perplexity_response(_ig_json(
+            business_email="hotel@test.com",
+            business_phone="+595 21 123 4567",
+        ))),
+        Response(200, json=_perplexity_response(_ig_json(
+            business_email="HOTEL@TEST.COM",
+            business_phone="595211234567",
+        ))),
+    ])
+
+    result = await service.scrape("https://www.instagram.com/hotelitapua/")
+
+    assert route.call_count == 2
+    assert result.business_email == "hotel@test.com"  # case-insensitive match
+    assert result.business_phone == "+595211234567"  # digits match
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_scrape_only_one_non_null_skips_validation(service):
+    """If only 1 non-null response in 3 attempts, use it without validation."""
+    route = respx.post(_PERPLEXITY_URL).mock(side_effect=[
+        Response(200, json=_perplexity_response(_all_null_json())),
+        Response(200, json=_perplexity_response(_all_null_json())),
+        Response(200, json=_perplexity_response(_ig_json())),
+    ])
+
+    result = await service.scrape("https://www.instagram.com/hotelitapua/")
+
+    assert route.call_count == 3
+    assert result.full_name == "Hotel Itapúa"
+
+
+# --- _values_match pure tests ---
+
+
+def test_values_match_phone_digits_only():
+    assert _values_match("business_phone", "+595 21 123", "59521123") is True
+    assert _values_match("business_phone", "+595211", "+595999") is False
+
+
+def test_values_match_email_case_insensitive():
+    assert _values_match("business_email", "A@B.com", "a@b.com") is True
+    assert _values_match("business_email", "a@b.com", "x@y.com") is False
+
+
+def test_values_match_name_case_insensitive():
+    assert _values_match("full_name", "Hotel Sol", "hotel sol") is True
+
+
+def test_values_match_biography_always_true():
+    assert _values_match("biography", "text A", "text B") is True
+
+
+def test_values_match_follower_count_exact():
+    assert _values_match("follower_count", 1500, 1500) is True
+    assert _values_match("follower_count", 1500, 12500) is False
+
+
+def test_values_match_whatsapp_url_digits():
+    assert _values_match("whatsapp_url", "https://wa.me/595981654321", "wa.me/595981654321") is True
+    assert _values_match("whatsapp_url", "https://wa.me/595981654321", "wa.me/595999999999") is False
+
+
+# --- _cross_validate pure tests ---
+
+
+def test_cross_validate_both_agree():
+    a = {"full_name": "Hotel", "business_email": "a@b.com", "follower_count": 100}
+    b = {"full_name": "hotel", "business_email": "A@B.COM", "follower_count": 100}
+    result = _cross_validate(a, b)
+    assert result["full_name"] == "Hotel"
+    assert result["business_email"] == "a@b.com"
+    assert result["follower_count"] == 100
+
+
+def test_cross_validate_disagreement_drops():
+    a = {"business_phone": "+595111", "follower_count": 100}
+    b = {"business_phone": "+595999", "follower_count": 200}
+    result = _cross_validate(a, b)
+    assert result["business_phone"] is None
+    assert result["follower_count"] is None
+
+
+def test_cross_validate_one_null_keeps_value():
+    a = {"business_email": "a@b.com", "business_phone": None}
+    b = {"business_email": None, "business_phone": "+595111"}
+    result = _cross_validate(a, b)
+    assert result["business_email"] == "a@b.com"
+    assert result["business_phone"] == "+595111"
+
+
+def test_cross_validate_both_null():
+    a = {"business_email": None}
+    b = {"business_email": None}
+    result = _cross_validate(a, b)
+    assert result["business_email"] is None
