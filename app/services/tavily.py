@@ -421,8 +421,7 @@ class TavilyService:
         """Search for the Instagram profile associated with a website URL."""
         try:
             result = await self._client.search(
-                query=f"cuenta de instagram de {website_url}",
-                include_domains=["instagram.com"],
+                query=f"cual es la cuenta de instagram que sale en {website_url}",
                 search_depth="advanced",
                 max_results=3,
             )
