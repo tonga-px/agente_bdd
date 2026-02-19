@@ -11,7 +11,7 @@ from app.services.enrichment import _normalize_phone
 logger = logging.getLogger(__name__)
 
 _PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
-_PERPLEXITY_MODEL = "sonar"
+_PERPLEXITY_MODEL = "sonar-pro"
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -182,8 +182,6 @@ class InstagramService:
         except (KeyError, IndexError):
             logger.warning("Unexpected Perplexity response for Instagram %s", username)
             return InstagramData(username=username, profile_url=profile_url)
-
-        logger.info("Perplexity raw response for Instagram %s: %s", username, content[:500])
 
         parsed = _try_parse_json(content)
         if not parsed:
