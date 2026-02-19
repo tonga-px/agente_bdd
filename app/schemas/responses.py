@@ -74,6 +74,25 @@ class HacerTareasResponse(BaseModel):
     results: list[TaskResult]
 
 
+class LeadAction(BaseModel):
+    lead_id: str
+    lead_name: str | None = None
+    action: str  # "stage_updated" | "task_created" | "error"
+    message: str | None = None
+
+
+class CalificarLeadResponse(BaseModel):
+    company_id: str
+    company_name: str | None = None
+    status: str  # "completed" | "error"
+    message: str | None = None
+    market_fit: str | None = None
+    rooms: str | None = None
+    reasoning: str | None = None
+    lead_actions: list[LeadAction] = []
+    note: str | None = None
+
+
 class JobSubmittedResponse(BaseModel):
     job_id: str
     status: str
@@ -86,5 +105,5 @@ class JobStatusResponse(BaseModel):
     created_at: datetime
     finished_at: datetime | None = None
     company_id: str | None = None
-    result: EnrichmentResponse | ProspeccionResponse | HacerTareasResponse | None = None
+    result: EnrichmentResponse | ProspeccionResponse | HacerTareasResponse | CalificarLeadResponse | None = None
     error: str | None = None

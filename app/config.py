@@ -13,3 +13,4 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
     elevenlabs_agent_id: str = ""
     elevenlabs_phone_number_id: str = ""
+    anthropic_api_key: str = ""

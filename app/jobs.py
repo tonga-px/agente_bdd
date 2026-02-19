@@ -6,9 +6,14 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
-from app.schemas.responses import EnrichmentResponse, HacerTareasResponse, ProspeccionResponse
+from app.schemas.responses import (
+    CalificarLeadResponse,
+    EnrichmentResponse,
+    HacerTareasResponse,
+    ProspeccionResponse,
+)
 
-JobResult = EnrichmentResponse | ProspeccionResponse | HacerTareasResponse
+JobResult = EnrichmentResponse | ProspeccionResponse | HacerTareasResponse | CalificarLeadResponse
 
 
 class JobStatus(StrEnum):

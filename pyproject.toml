@@ -17,6 +17,7 @@ dependencies = [
     "duckduckgo-search>=7,<9",
     "holidays>=0.63,<1",
     "tzdata>=2024.1",
+    "anthropic>=0.80,<1",
 ]
 
 [project.optional-dependencies]

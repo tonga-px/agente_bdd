@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import httpx
 
 from app.exceptions.custom import HubSpotError, RateLimitError
-from app.schemas.hubspot import HubSpotCompany, HubSpotContact, HubSpotEmail, HubSpotNote
+from app.schemas.hubspot import HubSpotCompany, HubSpotContact, HubSpotEmail, HubSpotLead, HubSpotNote
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
 TASKS_URL = "https://api.hubapi.com/crm/v3/objects/tasks"
 CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 EMAILS_URL = "https://api.hubapi.com/crm/v3/objects/emails"
+LEADS_URL = "https://api.hubapi.com/crm/v3/objects/leads"
 TASKS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/tasks/search"
 TASK_ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/tasks"
 ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/companies"
@@ -42,6 +43,8 @@ SEARCH_PROPERTIES = [
     "id_tripadvisor",
     "market_fit",
     "plaza",
+    "cantidad_de_habitaciones",
+    "habitaciones",
 ]
 
 
@@ -463,3 +466,60 @@ class HubSpotService:
             raise HubSpotError(resp.text, status_code=resp.status_code)
 
         logger.info("Updated task %s", task_id)
+
+    async def get_associated_calls(
+        self, company_id: str, limit: int = 10
+    ) -> list[dict]:
+        ids = await self._get_associated_ids(company_id, "calls")
+        calls: list[dict] = []
+        for obj_id in ids[:limit]:
+            url = f"{CALLS_URL}/{obj_id}"
+            resp = await self._client.get(
+                url,
+                params={
+                    "properties": "hs_call_body,hs_call_direction,hs_timestamp,hs_call_status"
+                },
+                headers=self._headers,
+            )
+            if resp.status_code >= 400:
+                logger.warning("Failed to fetch call %s: %s", obj_id, resp.status_code)
+                continue
+            calls.append(resp.json())
+        logger.info("Fetched %d calls for company %s", len(calls), company_id)
+        return calls
+
+    async def get_associated_leads(
+        self, company_id: str
+    ) -> list[HubSpotLead]:
+        ids = await self._get_associated_ids(company_id, "leads")
+        leads: list[HubSpotLead] = []
+        for obj_id in ids:
+            url = f"{LEADS_URL}/{obj_id}"
+            resp = await self._client.get(
+                url,
+                params={
+                    "properties": "hubspot_owner_id,hs_lead_name,hs_pipeline_stage"
+                },
+                headers=self._headers,
+            )
+            if resp.status_code >= 400:
+                logger.warning("Failed to fetch lead %s: %s", obj_id, resp.status_code)
+                continue
+            leads.append(HubSpotLead(**resp.json()))
+        logger.info("Fetched %d leads for company %s", len(leads), company_id)
+        return leads
+
+    async def update_lead(
+        self, lead_id: str, properties: dict[str, str]
+    ) -> None:
+        url = f"{LEADS_URL}/{lead_id}"
+        resp = await self._client.patch(
+            url, json={"properties": properties}, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Updated lead %s", lead_id)

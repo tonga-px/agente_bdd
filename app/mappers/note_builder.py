@@ -350,6 +350,53 @@ def build_error_note(
     )
 
 
+def build_calificar_lead_note(
+    company_name: str | None,
+    market_fit: str | None,
+    rooms: str | None,
+    reasoning: str | None,
+    lead_actions: list | None = None,
+) -> str:
+    """Build an HTML note summarizing lead qualification results."""
+    from app.schemas.responses import LeadAction
+
+    title = escape(company_name or "Empresa")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    emoji_map = {
+        "No es FIT": "\u274c",
+        "Hormiga": "\U0001f41c",
+        "Conejo": "\U0001f430",
+        "Elefante": "\U0001f418",
+    }
+    fit_emoji = emoji_map.get(market_fit or "", "\u2753")
+
+    parts: list[str] = [
+        f"<h2>{fit_emoji} Calificación - {title}</h2>",
+        f"<p><em>Fecha: {now}</em></p>",
+        "<ul>",
+    ]
+
+    if market_fit:
+        parts.append(f"<li><strong>Market Fit:</strong> {escape(market_fit)}</li>")
+    if rooms:
+        parts.append(f"<li><strong>Habitaciones:</strong> {escape(rooms)}</li>")
+    if reasoning:
+        parts.append(f"<li><strong>Razonamiento:</strong> {escape(reasoning)}</li>")
+
+    parts.append("</ul>")
+
+    if lead_actions:
+        typed_actions: list[LeadAction] = lead_actions
+        parts.append("<h3>Acciones sobre Leads</h3><ul>")
+        for action in typed_actions:
+            name = escape(action.lead_name or action.lead_id)
+            parts.append(f"<li>{name}: {escape(action.action)} — {escape(action.message or '')}</li>")
+        parts.append("</ul>")
+
+    return "".join(parts)
+
+
 def build_enrichment_note(
     company_name: str | None,
     place: GooglePlace | None,

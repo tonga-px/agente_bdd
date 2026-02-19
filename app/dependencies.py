@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.jobs import JobStore
+from app.services.calificar_lead import CalificarLeadService
 from app.services.enrichment import EnrichmentService
 from app.services.hacer_tareas import HacerTareasService
 from app.services.prospeccion import ProspeccionService
@@ -28,3 +29,10 @@ EnrichmentDep = Annotated[EnrichmentService, Depends(get_enrichment_service)]
 JobStoreDep = Annotated[JobStore, Depends(get_job_store)]
 ProspeccionDep = Annotated[ProspeccionService | None, Depends(get_prospeccion_service)]
 HacerTareasDep = Annotated[HacerTareasService, Depends(get_hacer_tareas_service)]
+
+
+def get_calificar_lead_service(request: Request) -> CalificarLeadService | None:
+    return getattr(request.app.state, "calificar_lead_service", None)
+
+
+CalificarLeadDep = Annotated[CalificarLeadService | None, Depends(get_calificar_lead_service)]

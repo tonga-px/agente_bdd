@@ -11,6 +11,7 @@ def mock_env(monkeypatch):
     monkeypatch.setenv("ELEVENLABS_API_KEY", "test-el-key")
     monkeypatch.setenv("ELEVENLABS_AGENT_ID", "test-agent-id")
     monkeypatch.setenv("ELEVENLABS_PHONE_NUMBER_ID", "test-phone-id")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 
 
 @pytest.fixture

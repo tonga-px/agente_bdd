@@ -21,6 +21,7 @@ from app.exceptions.handlers import (
     rate_limit_error_handler,
     tripadvisor_error_handler,
 )
+from app.routers.calificar_lead import router as calificar_lead_router
 from app.routers.enrichment import router as enrichment_router
 from app.routers.hacer_tareas import router as hacer_tareas_router
 from app.routers.prospeccion import router as prospeccion_router
@@ -33,6 +34,8 @@ from app.services.prospeccion import ProspeccionService
 from app.services.tripadvisor import TripAdvisorService
 from app.services.perplexity import PerplexityService
 from app.services.instagram import InstagramService
+from app.services.calificar_lead import CalificarLeadService
+from app.services.claude import ClaudeService
 from app.services.website_scraper import WebsiteScraperService
 
 
@@ -87,6 +90,13 @@ async def lifespan(app: FastAPI):
         else:
             app.state.prospeccion_service = None
 
+        # Claude + CalificarLead (conditional)
+        if settings.anthropic_api_key:
+            claude = ClaudeService(settings.anthropic_api_key)
+            app.state.calificar_lead_service = CalificarLeadService(hubspot, claude)
+        else:
+            app.state.calificar_lead_service = None
+
         yield
 
 
@@ -101,3 +111,4 @@ app.add_exception_handler(RateLimitError, rate_limit_error_handler)
 app.include_router(enrichment_router)
 app.include_router(hacer_tareas_router)
 app.include_router(prospeccion_router)
+app.include_router(calificar_lead_router)

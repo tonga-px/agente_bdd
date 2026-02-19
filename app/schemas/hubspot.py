@@ -16,6 +16,8 @@ class HubSpotCompanyProperties(BaseModel):
     id_tripadvisor: str | None = None
     market_fit: str | None = None
     plaza: str | None = None
+    cantidad_de_habitaciones: str | None = None
+    habitaciones: str | None = None
 
 
 class HubSpotCompany(BaseModel):
@@ -46,3 +48,14 @@ class HubSpotNote(BaseModel):
 class HubSpotEmail(BaseModel):
     id: str
     properties: dict
+
+
+class HubSpotLeadProperties(BaseModel):
+    hubspot_owner_id: str | None = None
+    hs_lead_name: str | None = None
+    hs_pipeline_stage: str | None = None
+
+
+class HubSpotLead(BaseModel):
+    id: str
+    properties: HubSpotLeadProperties
