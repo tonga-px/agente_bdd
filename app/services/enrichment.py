@@ -393,6 +393,19 @@ class EnrichmentService:
             if isinstance(res, BaseException):
                 logger.warning("Optional enrichment task %d failed: %s", i, res)
 
+        # --- Instagram from website link (if not already scraped) ---
+        if (not instagram_data and self._instagram and web_data
+                and web_data.instagram_url):
+            try:
+                instagram_data = await self._instagram.scrape(
+                    web_data.instagram_url, hotel_name=props.name, city=props.city,
+                )
+            except Exception:
+                logger.exception(
+                    "Instagram scrape (from website) failed for company %s",
+                    company.id,
+                )
+
         # --- Merge results ---
         if place is None and ta_location is None:
             await self._hubspot.update_company(company.id, {"agente": ""})

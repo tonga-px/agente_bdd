@@ -24,6 +24,9 @@ _CONTACT_PATHS = ("/contacto", "/contact")
 
 _ROOM_RE = re.compile(r"(\d+)\s*(?:habitacion|room|cuarto|suite|chambre|quarto)", re.IGNORECASE)
 
+_INSTAGRAM_URL_RE = re.compile(r"https?://(?:www\.)?instagram\.com/([a-zA-Z0-9_.]+)")
+_NON_PROFILE_PATHS = frozenset({"p", "reel", "stories", "explore", "accounts", "api"})
+
 # Rating patterns for reputation parsing
 # Rating: X.X/5 (or /10 for Booking) near platform name
 _GOOGLE_RATING_RE = re.compile(r"google.{0,80}?(\d[.,]\d)\s*/?\s*5", re.IGNORECASE)
@@ -49,6 +52,15 @@ def _is_blocked_email(email: str) -> bool:
     lower = email.lower()
     _, _, domain = lower.partition("@")
     return domain in _BLOCKED_EMAIL_DOMAINS
+
+
+def _extract_instagram_url(text: str) -> str | None:
+    """Find first valid Instagram profile URL in text."""
+    for m in _INSTAGRAM_URL_RE.finditer(text):
+        username = m.group(1).lower().rstrip("/")
+        if username not in _NON_PROFILE_PATHS:
+            return m.group(0)
+    return None
 
 
 def _extract_phones(text: str) -> list[str]:
@@ -117,6 +129,7 @@ class TavilyService:
         phones = _extract_phones(raw_content) if raw_content else []
         emails = _extract_emails(raw_content) if raw_content else []
         whatsapp = _extract_whatsapp(raw_content) if raw_content else None
+        instagram_url = _extract_instagram_url(raw_content) if raw_content else None
 
         # If no emails found, try contact pages
         if not emails:
@@ -141,6 +154,7 @@ class TavilyService:
             phones=phones,
             whatsapp=whatsapp,
             emails=emails,
+            instagram_url=instagram_url,
             source_url=url,
         )
 

@@ -462,3 +462,72 @@ async def test_search_instagram_profile_uses_domains_filter(service, tavily_clie
     tavily_client_mock.search.assert_awaited_once()
     call_kwargs = tavily_client_mock.search.call_args
     assert call_kwargs.kwargs.get("include_domains") == ["instagram.com"]
+
+
+# --- extract_website: instagram_url detection ---
+
+
+@pytest.mark.asyncio
+async def test_extract_website_finds_instagram_url(service, tavily_client_mock):
+    """Instagram profile URL in website content is extracted."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{
+            "raw_content": (
+                "Síguenos en https://www.instagram.com/hotelvillamansa "
+                "Tel: +54 11 1234 5678"
+            ),
+        }],
+    }
+
+    result = await service.extract_website("https://villamansa.com")
+
+    assert result.instagram_url == "https://www.instagram.com/hotelvillamansa"
+
+
+@pytest.mark.asyncio
+async def test_extract_website_ignores_non_profile_instagram_paths(service, tavily_client_mock):
+    """Non-profile Instagram paths (reel, stories, explore, etc.) are ignored."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{
+            "raw_content": (
+                "Check our https://www.instagram.com/reel/ABC123 "
+                "and https://instagram.com/explore"
+            ),
+        }],
+    }
+
+    result = await service.extract_website("https://hotel.com")
+
+    assert result.instagram_url is None
+
+
+@pytest.mark.asyncio
+async def test_extract_website_instagram_url_first_valid(service, tavily_client_mock):
+    """Multiple Instagram URLs → first valid profile is used."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{
+            "raw_content": (
+                "See https://instagram.com/p/XYZ "
+                "Follow us https://instagram.com/hotel_real "
+                "Also https://instagram.com/other_hotel"
+            ),
+        }],
+    }
+
+    result = await service.extract_website("https://hotel.com")
+
+    assert result.instagram_url == "https://instagram.com/hotel_real"
+
+
+@pytest.mark.asyncio
+async def test_extract_website_no_instagram_url(service, tavily_client_mock):
+    """No Instagram URL in content → instagram_url is None."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{
+            "raw_content": "Tel: +54 11 1234 5678 Email: info@hotel.com",
+        }],
+    }
+
+    result = await service.extract_website("https://hotel.com")
+
+    assert result.instagram_url is None

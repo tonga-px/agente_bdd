@@ -1273,3 +1273,90 @@ async def test_no_tavily_uses_website_scraper_and_perplexity():
     assert result.status == "enriched"
     ws.scrape.assert_awaited_once()
     perp.search_booking_data.assert_awaited_once()
+
+
+# --- Instagram from website link ---
+
+
+@pytest.mark.asyncio
+async def test_instagram_from_website_link():
+    """web_data.instagram_url triggers instagram.scrape() when no prior IG data."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+    gp.text_search.return_value = GooglePlace(
+        id="ChIJ_test",
+        formattedAddress="Mendoza, Argentina",
+        websiteUri="https://villamansa.com",
+        addressComponents=[
+            {"longText": "Mendoza", "shortText": "MDZ", "types": ["locality"]},
+            {"longText": "Argentina", "shortText": "AR", "types": ["country"]},
+        ],
+    )
+
+    tavily = AsyncMock(spec=TavilyService)
+    tavily.extract_website.return_value = WebScrapedData(
+        phones=["+542614000000"],
+        emails=["info@villamansa.com"],
+        instagram_url="https://www.instagram.com/villamansawinehotel",
+        source_url="https://villamansa.com",
+    )
+    tavily.search_booking_data.return_value = BookingData()
+    tavily.search_room_count.return_value = None
+    tavily.search_reputation.return_value = None
+
+    ig_mock = AsyncMock(spec=InstagramService)
+    ig_mock.scrape.return_value = _ig_data(
+        username="villamansawinehotel",
+        business_phone="+542615001234",
+    )
+
+    svc = EnrichmentService(
+        hubspot=hs, google_places=gp, tavily=tavily,
+        instagram=ig_mock, overwrite=False,
+    )
+
+    company = _company(name="Villa Mansa", city="Mendoza", country="Argentina")
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    ig_mock.scrape.assert_awaited_once_with(
+        "https://www.instagram.com/villamansawinehotel",
+        hotel_name="Villa Mansa", city="Mendoza",
+    )
+
+
+@pytest.mark.asyncio
+async def test_instagram_from_website_link_skipped_when_already_scraped():
+    """If instagram_data already exists (URL was instagram.com), don't scrape again."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+    gp.text_search.return_value = GooglePlace(
+        id="ChIJ_test",
+        formattedAddress="Asunción, Paraguay",
+        websiteUri="https://www.instagram.com/hotelitapua/",
+        addressComponents=[
+            {"longText": "Asunción", "shortText": "ASU", "types": ["locality"]},
+            {"longText": "Paraguay", "shortText": "PY", "types": ["country"]},
+        ],
+    )
+
+    ig_mock = AsyncMock(spec=InstagramService)
+    ig_mock.scrape.return_value = _ig_data(business_phone="+595211234567")
+
+    svc = EnrichmentService(
+        hubspot=hs, google_places=gp, instagram=ig_mock, overwrite=False,
+    )
+
+    company = _company(name="Hotel Itapúa", city="Asunción", country="Paraguay")
+    await svc._process_company(company)
+
+    # scrape called once for the original instagram.com URL, not a second time
+    ig_mock.scrape.assert_awaited_once()
