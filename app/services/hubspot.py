@@ -15,6 +15,7 @@ CALLS_URL = "https://api.hubapi.com/crm/v3/objects/calls"
 MERGE_URL = "https://api.hubapi.com/crm/v3/objects/companies/merge"
 FILES_URL = "https://api.hubapi.com/files/v3/files"
 NOTES_URL = "https://api.hubapi.com/crm/v3/objects/notes"
+TASKS_URL = "https://api.hubapi.com/crm/v3/objects/tasks"
 CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 EMAILS_URL = "https://api.hubapi.com/crm/v3/objects/emails"
 ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/companies"
@@ -349,3 +350,34 @@ class HubSpotService:
             raise HubSpotError(resp.text, status_code=resp.status_code)
 
         logger.info("Created call for company %s", company_id)
+
+    async def create_task(
+        self, company_id: str, properties: dict[str, str]
+    ) -> str:
+        payload = {
+            "properties": properties,
+            "associations": [
+                {
+                    "to": {"id": company_id},
+                    "types": [
+                        {
+                            "associationCategory": "HUBSPOT_DEFINED",
+                            "associationTypeId": 192,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        resp = await self._client.post(
+            TASKS_URL, json=payload, headers=self._headers
+        )
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        task_id = resp.json().get("id", "")
+        logger.info("Created task %s for company %s", task_id, company_id)
+        return task_id

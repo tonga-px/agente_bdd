@@ -5,6 +5,11 @@ import re
 from app.exceptions.custom import HubSpotError, RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
+from app.mappers.task_scheduler import (
+    build_task_body,
+    build_task_subject,
+    compute_task_due_date,
+)
 from app.mappers.note_builder import (
     build_conflict_note,
     build_enrichment_note,
@@ -514,6 +519,11 @@ class EnrichmentService:
         # --- Deduplicate contacts (best-effort) ---
         await self._deduplicate_contacts(company.id)
 
+        # --- Create follow-up task (best-effort) ---
+        await self._create_followup_task(
+            company.id, props.name, props.city, props.country,
+        )
+
         return CompanyResult(
             company_id=company.id,
             company_name=props.name,
@@ -521,6 +531,30 @@ class EnrichmentService:
             changes=changes,
             note=note_body,
         )
+
+    async def _create_followup_task(
+        self,
+        company_id: str,
+        company_name: str | None,
+        city: str | None,
+        country: str | None,
+    ) -> None:
+        """Create a HubSpot task for the next business day (best-effort)."""
+        try:
+            properties = {
+                "hs_task_subject": build_task_subject(company_name),
+                "hs_task_body": build_task_body(company_id, company_name, city, country),
+                "hs_task_status": "NOT_STARTED",
+                "hs_task_priority": "MEDIUM",
+                "hs_timestamp": compute_task_due_date(country),
+                "hs_task_type": "TODO",
+            }
+            await self._hubspot.create_task(company_id, properties)
+        except Exception:
+            logger.exception(
+                "Failed to create follow-up task for company %s, enrichment still succeeded",
+                company_id,
+            )
 
     async def _create_contacts(
         self,

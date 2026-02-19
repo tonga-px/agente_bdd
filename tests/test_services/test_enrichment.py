@@ -1030,3 +1030,45 @@ async def test_deduplicate_delete_failure_continues(service, hubspot_mock):
     hubspot_mock.delete_contact.side_effect = [Exception("fail"), None]
     await service._deduplicate_contacts("C1")  # should not raise
     assert hubspot_mock.delete_contact.await_count == 2
+
+
+# --- _create_followup_task tests ---
+
+
+@pytest.mark.asyncio
+async def test_followup_task_created_on_enrichment(enrichment_service):
+    """Successful enrichment → create_task called with correct subject."""
+    svc, hs, gp = enrichment_service
+    hs.create_task.return_value = "task-1"
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    hs.create_task.assert_awaited_once()
+    call_args = hs.create_task.await_args
+    company_id_arg = call_args.args[0]
+    props_arg = call_args.args[1]
+    assert company_id_arg == company.id
+    assert "Agente:calificar_lead" in props_arg["hs_task_subject"]
+    assert "Hotel Sol" in props_arg["hs_task_subject"]
+    assert props_arg["hs_task_status"] == "NOT_STARTED"
+    assert props_arg["hs_task_priority"] == "MEDIUM"
+    assert props_arg["hs_task_type"] == "TODO"
+
+
+@pytest.mark.asyncio
+async def test_followup_task_failure_doesnt_block(enrichment_service):
+    """create_task failure → enrichment still completes with status='enriched'."""
+    svc, hs, gp = enrichment_service
+    hs.create_task.side_effect = Exception("HubSpot task API down")
+
+    company = _company(name="Hotel Luna", city="Cusco", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    hs.create_task.assert_awaited_once()

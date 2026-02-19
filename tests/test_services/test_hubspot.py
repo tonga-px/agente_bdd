@@ -9,6 +9,7 @@ from app.services.hubspot import (
     CONTACTS_URL,
     EMAILS_URL,
     MERGE_URL,
+    TASKS_URL,
     HubSpotService,
 )
 
@@ -275,3 +276,46 @@ async def test_delete_contact_not_found():
             await service.delete_contact(CONTACT_ID)
 
     assert exc_info.value.status_code == 404
+
+
+# --- create_task tests ---
+
+
+TASK_ID = "901"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_create_task_success():
+    respx.post(TASKS_URL).mock(
+        return_value=Response(201, json={"id": TASK_ID})
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        result = await service.create_task(
+            COMPANY_ID, {"hs_task_subject": "Agente:calificar_lead | Hotel Sol"}
+        )
+
+    assert result == TASK_ID
+    req = respx.calls.last.request
+    import json
+    body = json.loads(req.content)
+    assert body["properties"]["hs_task_subject"] == "Agente:calificar_lead | Hotel Sol"
+    assert body["associations"][0]["to"]["id"] == COMPANY_ID
+    assert body["associations"][0]["types"][0]["associationTypeId"] == 192
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_create_task_error():
+    respx.post(TASKS_URL).mock(
+        return_value=Response(400, text="bad request")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        with pytest.raises(HubSpotError) as exc_info:
+            await service.create_task(COMPANY_ID, {"hs_task_subject": "test"})
+
+    assert exc_info.value.status_code == 400
