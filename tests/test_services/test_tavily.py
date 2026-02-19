@@ -461,8 +461,9 @@ async def test_search_instagram_profile_uses_advanced_search(service, tavily_cli
 
     tavily_client_mock.search.assert_awaited_once()
     call_kwargs = tavily_client_mock.search.call_args
-    assert "instagram.com/hotelsol" in call_kwargs.kwargs.get("query", "")
+    assert "@hotelsol" in call_kwargs.kwargs.get("query", "")
     assert call_kwargs.kwargs.get("search_depth") == "advanced"
+    assert call_kwargs.kwargs.get("include_domains") == ["instagram.com"]
 
 
 # --- extract_website: instagram_url detection ---

@@ -384,12 +384,13 @@ class TavilyService:
         """Tavily Search for Instagram profile contact info. Returns combined text or None."""
         try:
             profile_url = f"https://www.instagram.com/{username}/"
-            query = (
-                f"email telefono whatsapp de {profile_url}"
-            )
+            context_parts = [p for p in (hotel_name, city) if p]
+            context = " ".join(context_parts)
+            query = f"@{username} {context} Instagram email telefono whatsapp".strip()
 
             result = await self._client.search(
                 query=query,
+                include_domains=["instagram.com"],
                 search_depth="advanced",
                 max_results=5,
                 include_answer=True,
