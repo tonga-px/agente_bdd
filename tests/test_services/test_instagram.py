@@ -10,6 +10,7 @@ from httpx import Response
 from app.schemas.instagram import InstagramData
 from app.services.instagram import (
     InstagramService,
+    _is_all_null,
     is_instagram_url,
     _extract_username,
     _extract_phones,
@@ -350,3 +351,76 @@ async def test_scrape_perplexity_sends_auth_header(service):
     assert route.called
     request = route.calls[0].request
     assert request.headers["authorization"] == "Bearer test-api-key"
+
+
+# --- _is_all_null ---
+
+
+def test_is_all_null_true():
+    assert _is_all_null({"a": None, "b": None}) is True
+
+
+def test_is_all_null_false():
+    assert _is_all_null({"a": None, "b": "value"}) is False
+
+
+def test_is_all_null_empty():
+    assert _is_all_null({}) is True
+
+
+# --- retry on all-null ---
+
+
+def _all_null_json():
+    return _ig_json(
+        full_name=None, biography=None, external_url=None,
+        business_email=None, business_phone=None,
+        follower_count=None, whatsapp_url=None,
+    )
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_scrape_retries_on_all_null_then_succeeds(service):
+    """First call returns all-null, second returns data → uses second result."""
+    route = respx.post(_PERPLEXITY_URL).mock(side_effect=[
+        Response(200, json=_perplexity_response(_all_null_json())),
+        Response(200, json=_perplexity_response(_ig_json())),
+    ])
+
+    result = await service.scrape("https://www.instagram.com/hotelitapua/")
+
+    assert route.call_count == 2
+    assert result.full_name == "Hotel Itapúa"
+    assert result.follower_count == 1500
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_scrape_retries_max_3_times(service):
+    """All 3 attempts return all-null → returns data with nulls."""
+    route = respx.post(_PERPLEXITY_URL).mock(side_effect=[
+        Response(200, json=_perplexity_response(_all_null_json())),
+        Response(200, json=_perplexity_response(_all_null_json())),
+        Response(200, json=_perplexity_response(_all_null_json())),
+    ])
+
+    result = await service.scrape("https://www.instagram.com/hotelitapua/")
+
+    assert route.call_count == 3
+    assert result.username == "hotelitapua"
+    assert result.full_name is None
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_scrape_no_retry_when_data_present(service):
+    """First call returns data → no retry."""
+    route = respx.post(_PERPLEXITY_URL).mock(return_value=Response(
+        200, json=_perplexity_response(_ig_json()),
+    ))
+
+    result = await service.scrape("https://www.instagram.com/hotelitapua/")
+
+    assert route.call_count == 1
+    assert result.full_name == "Hotel Itapúa"

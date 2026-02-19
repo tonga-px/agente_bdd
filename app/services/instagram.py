@@ -121,6 +121,11 @@ def _try_parse_json(text: str) -> dict | None:
     return None
 
 
+def _is_all_null(parsed: dict) -> bool:
+    """Check if all values in a parsed Perplexity response are None/null."""
+    return all(v is None for v in parsed.values())
+
+
 class InstagramService:
     def __init__(self, client: httpx.AsyncClient, api_key: str):
         self._client = client
@@ -154,40 +159,8 @@ class InstagramService:
         context = f"que pertenece a {', '.join(context_parts)}" if context_parts else ""
         prompt = _USER_PROMPT_TEMPLATE.format(username=username, context=context)
 
-        try:
-            resp = await self._client.post(
-                _PERPLEXITY_URL,
-                json={
-                    "model": _PERPLEXITY_MODEL,
-                    "messages": [
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "search_domain_filter": ["instagram.com"],
-                },
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-        except (httpx.HTTPError, httpx.TimeoutException):
-            logger.exception("Perplexity API call failed for Instagram %s", username)
-            return InstagramData(username=username, profile_url=profile_url)
-
-        data = resp.json()
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError):
-            logger.warning("Unexpected Perplexity response for Instagram %s", username)
-            return InstagramData(username=username, profile_url=profile_url)
-
-        logger.info("Perplexity raw response for Instagram %s: %s", username, content[:500])
-
-        parsed = _try_parse_json(content)
-        if not parsed:
-            logger.warning("Could not parse JSON from Perplexity for Instagram %s", username)
+        parsed = await self._call_perplexity(username, profile_url, prompt)
+        if parsed is None:
             return InstagramData(username=username, profile_url=profile_url)
 
         full_name = parsed.get("full_name") or None
@@ -240,6 +213,70 @@ class InstagramService:
             bio_emails=bio_emails,
             whatsapp=whatsapp,
         )
+
+    _MAX_RETRIES = 3
+
+    async def _call_perplexity(
+        self, username: str, profile_url: str, prompt: str,
+    ) -> dict | None:
+        """Call Perplexity API, retrying up to _MAX_RETRIES times if all fields are null."""
+        import asyncio
+
+        for attempt in range(1, self._MAX_RETRIES + 1):
+            try:
+                resp = await self._client.post(
+                    _PERPLEXITY_URL,
+                    json={
+                        "model": _PERPLEXITY_MODEL,
+                        "messages": [
+                            {"role": "system", "content": _SYSTEM_PROMPT},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "search_domain_filter": ["instagram.com"],
+                    },
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+            except (httpx.HTTPError, httpx.TimeoutException):
+                logger.exception(
+                    "Perplexity API call failed for Instagram %s (attempt %d/%d)",
+                    username, attempt, self._MAX_RETRIES,
+                )
+                return None
+
+            data = resp.json()
+            try:
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError):
+                logger.warning("Unexpected Perplexity response for Instagram %s", username)
+                return None
+
+            logger.info("Perplexity raw response for Instagram %s: %s", username, content[:500])
+
+            parsed = _try_parse_json(content)
+            if not parsed:
+                logger.warning("Could not parse JSON from Perplexity for Instagram %s", username)
+                return None
+
+            if not _is_all_null(parsed) or attempt == self._MAX_RETRIES:
+                if _is_all_null(parsed):
+                    logger.warning(
+                        "Perplexity returned all-null for Instagram %s after %d attempts",
+                        username, self._MAX_RETRIES,
+                    )
+                return parsed
+
+            logger.info(
+                "Perplexity returned all-null for Instagram %s, retrying (%d/%d)",
+                username, attempt, self._MAX_RETRIES,
+            )
+            await asyncio.sleep(1)
+
+        return None  # unreachable, but keeps mypy happy
 
     async def _resolve_whatsapp(self, urls: list[str]) -> str | None:
         """Extract WhatsApp number from wa.me, api.whatsapp.com, or wa.link URLs."""
