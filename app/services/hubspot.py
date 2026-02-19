@@ -385,11 +385,11 @@ class HubSpotService:
         return task_id
 
     async def search_tasks(self, limit: int = 100) -> list[dict]:
-        """Search for open tasks with hs_timestamp <= now.
+        """Search for open "Agente" tasks with hs_timestamp <= now.
 
-        Returns raw task dicts (id + properties). Client-side filtering
-        for "Agente:" prefix is done by the caller because HubSpot's
-        tokenization of CONTAINS_TOKEN is unpredictable.
+        Uses CONTAINS_TOKEN "Agente" server-side to narrow results (the
+        portal has 100k+ open tasks).  Exact "Agente:" prefix filtering
+        is still done client-side by the caller.
         """
         now_ms = str(int(datetime.now(timezone.utc).timestamp() * 1000))
         payload = {
@@ -405,6 +405,11 @@ class HubSpotService:
                             "propertyName": "hs_timestamp",
                             "operator": "LTE",
                             "value": now_ms,
+                        },
+                        {
+                            "propertyName": "hs_task_subject",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": "Agente",
                         },
                     ]
                 }
