@@ -343,3 +343,62 @@ class TavilyService:
 
         logger.info("Tavily found reputation data for %s", hotel_name)
         return data
+
+    async def extract_instagram_profile(self, profile_url: str) -> str | None:
+        """Tavily Extract on Instagram profile URL. Returns raw text or None."""
+        try:
+            result = await self._client.extract(urls=[profile_url])
+            content = self._get_extract_content(result)
+            if content:
+                logger.info(
+                    "Tavily extracted %d chars from Instagram %s",
+                    len(content), profile_url,
+                )
+                return content
+            logger.info("Tavily extract returned no content for Instagram %s", profile_url)
+            return None
+        except Exception:
+            logger.exception("Tavily extract failed for Instagram %s", profile_url)
+            return None
+
+    async def search_instagram_profile(
+        self,
+        username: str,
+        hotel_name: str | None = None,
+        city: str | None = None,
+    ) -> str | None:
+        """Tavily Search with include_domains=["instagram.com"]. Returns combined text or None."""
+        try:
+            context_parts = [p for p in (hotel_name, city) if p]
+            context = " ".join(context_parts)
+            query = f"@{username} Instagram {context}".strip()
+
+            result = await self._client.search(
+                query=query,
+                include_domains=["instagram.com"],
+                max_results=3,
+                include_answer=True,
+            )
+
+            parts: list[str] = []
+            answer = result.get("answer", "")
+            if answer:
+                parts.append(answer)
+            for r in result.get("results", []):
+                content = r.get("content", "")
+                if content:
+                    parts.append(content)
+
+            if not parts:
+                logger.info("Tavily search found no Instagram data for @%s", username)
+                return None
+
+            combined = "\n".join(parts)
+            logger.info(
+                "Tavily search found %d chars for Instagram @%s",
+                len(combined), username,
+            )
+            return combined
+        except Exception:
+            logger.exception("Tavily search failed for Instagram @%s", username)
+            return None

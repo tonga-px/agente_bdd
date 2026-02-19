@@ -69,10 +69,14 @@ async def lifespan(app: FastAPI):
         if settings.tavily_api_key:
             tavily = TavilyService(settings.tavily_api_key)
 
+        instagram: InstagramService | None = None
+        if tavily:
+            instagram = InstagramService(tavily, client)
+
         enrichment = EnrichmentService(
             hubspot, google_places, tripadvisor=tripadvisor,
             website_scraper=website_scraper,
-            instagram=None,
+            instagram=instagram,
             perplexity=perplexity,
             tavily=tavily,
             overwrite=settings.overwrite_existing,

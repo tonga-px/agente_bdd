@@ -339,3 +339,126 @@ async def test_search_reputation_answer_only(service, tavily_client_mock):
     assert result is not None
     assert result.google_rating == 4.1
     assert result.summary is not None
+
+
+# --- extract_instagram_profile tests ---
+
+
+@pytest.mark.asyncio
+async def test_extract_instagram_profile_success(service, tavily_client_mock):
+    """Extract returns raw text from Instagram profile."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{"raw_content": "Hotel Sol\nBio text\n1,500 followers"}],
+    }
+
+    result = await service.extract_instagram_profile("https://www.instagram.com/hotelsol/")
+
+    assert result is not None
+    assert "Hotel Sol" in result
+    assert "1,500 followers" in result
+
+
+@pytest.mark.asyncio
+async def test_extract_instagram_profile_empty(service, tavily_client_mock):
+    """Extract returns no results → None."""
+    tavily_client_mock.extract.return_value = {"results": []}
+
+    result = await service.extract_instagram_profile("https://www.instagram.com/hotelsol/")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_extract_instagram_profile_no_content(service, tavily_client_mock):
+    """Extract result has no raw_content → None."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{"url": "https://www.instagram.com/hotelsol/"}],
+    }
+
+    result = await service.extract_instagram_profile("https://www.instagram.com/hotelsol/")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_extract_instagram_profile_api_error(service, tavily_client_mock):
+    """API error → None (graceful degradation)."""
+    tavily_client_mock.extract.side_effect = Exception("API down")
+
+    result = await service.extract_instagram_profile("https://www.instagram.com/hotelsol/")
+
+    assert result is None
+
+
+# --- search_instagram_profile tests ---
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_profile_success(service, tavily_client_mock):
+    """Search returns combined answer + content."""
+    tavily_client_mock.search.return_value = {
+        "answer": "Hotel Sol is a boutique hotel in Lima.",
+        "results": [
+            {"content": "Hotel Sol (@hotelsol) · 1,500 followers"},
+            {"content": "Reservas: +51 1 234 5678"},
+        ],
+    }
+
+    result = await service.search_instagram_profile("hotelsol", "Hotel Sol", "Lima")
+
+    assert result is not None
+    assert "Hotel Sol" in result
+    assert "1,500 followers" in result
+    assert "+51 1 234 5678" in result
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_profile_answer_only(service, tavily_client_mock):
+    """Search returns only answer (no results) → still returns text."""
+    tavily_client_mock.search.return_value = {
+        "answer": "Hotel Sol has 500 followers and is a boutique hotel.",
+        "results": [],
+    }
+
+    result = await service.search_instagram_profile("hotelsol")
+
+    assert result is not None
+    assert "Hotel Sol" in result
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_profile_no_data(service, tavily_client_mock):
+    """Search returns empty → None."""
+    tavily_client_mock.search.return_value = {
+        "answer": "",
+        "results": [],
+    }
+
+    result = await service.search_instagram_profile("hotelsol")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_profile_api_error(service, tavily_client_mock):
+    """API error → None (graceful degradation)."""
+    tavily_client_mock.search.side_effect = Exception("API down")
+
+    result = await service.search_instagram_profile("hotelsol")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_profile_uses_domains_filter(service, tavily_client_mock):
+    """Search passes include_domains=["instagram.com"]."""
+    tavily_client_mock.search.return_value = {
+        "answer": "Some data",
+        "results": [],
+    }
+
+    await service.search_instagram_profile("hotelsol", "Hotel Sol", "Lima")
+
+    tavily_client_mock.search.assert_awaited_once()
+    call_kwargs = tavily_client_mock.search.call_args
+    assert call_kwargs.kwargs.get("include_domains") == ["instagram.com"]
