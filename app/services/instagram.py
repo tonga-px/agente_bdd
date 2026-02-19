@@ -133,6 +133,8 @@ def _parse_profile_text(text: str, username: str, profile_url: str) -> Instagram
             continue
         if line.startswith("http") or "@" in line:
             continue
+        if "data:image" in line or "base64," in line:
+            continue
         if any(kw in line.lower() for kw in ("follower", "seguidor", "post", "following")):
             continue
         full_name = line
@@ -143,6 +145,8 @@ def _parse_profile_text(text: str, username: str, profile_url: str) -> Instagram
     bio_lines: list[str] = []
     for line in lines:
         if line.startswith("http"):
+            continue
+        if "data:image" in line or "base64," in line:
             continue
         if any(kw in line.lower() for kw in ("follower", "seguidor", "post", "following")):
             continue
