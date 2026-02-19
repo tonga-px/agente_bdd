@@ -416,3 +416,29 @@ class TavilyService:
         except Exception:
             logger.exception("Tavily search failed for Instagram @%s", username)
             return None
+
+    async def search_instagram_url(self, website_url: str) -> str | None:
+        """Search for the Instagram profile associated with a website URL."""
+        try:
+            result = await self._client.search(
+                query=f"cuenta de instagram de {website_url}",
+                include_domains=["instagram.com"],
+                search_depth="advanced",
+                max_results=3,
+            )
+            for r in result.get("results", []):
+                url = r.get("url", "")
+                m = _INSTAGRAM_URL_RE.search(url)
+                if m:
+                    username = m.group(1).lower().rstrip("/")
+                    if username not in _NON_PROFILE_PATHS:
+                        logger.info(
+                            "Tavily search found Instagram @%s for %s",
+                            username, website_url,
+                        )
+                        return m.group(0)
+            logger.info("Tavily search found no Instagram profile for %s", website_url)
+            return None
+        except Exception:
+            logger.exception("Tavily Instagram URL search failed for %s", website_url)
+            return None

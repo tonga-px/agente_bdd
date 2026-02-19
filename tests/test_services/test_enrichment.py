@@ -1360,3 +1360,56 @@ async def test_instagram_from_website_link_skipped_when_already_scraped():
 
     # scrape called once for the original instagram.com URL, not a second time
     ig_mock.scrape.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_instagram_from_tavily_search_fallback():
+    """No instagram_url in web_data → Tavily search finds profile → scrape called."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+    gp.text_search.return_value = GooglePlace(
+        id="ChIJ_test",
+        formattedAddress="Mendoza, Argentina",
+        websiteUri="https://villamansa.com",
+        addressComponents=[
+            {"longText": "Mendoza", "shortText": "MDZ", "types": ["locality"]},
+            {"longText": "Argentina", "shortText": "AR", "types": ["country"]},
+        ],
+    )
+
+    tavily = AsyncMock(spec=TavilyService)
+    tavily.extract_website.return_value = WebScrapedData(
+        phones=["+542614000000"],
+        emails=["info@villamansa.com"],
+        source_url="https://villamansa.com",
+        # instagram_url is None — not found in extract
+    )
+    tavily.search_booking_data.return_value = BookingData()
+    tavily.search_room_count.return_value = None
+    tavily.search_reputation.return_value = None
+    tavily.search_instagram_url.return_value = "https://www.instagram.com/villamansah"
+
+    ig_mock = AsyncMock(spec=InstagramService)
+    ig_mock.scrape.return_value = _ig_data(
+        username="villamansah",
+        business_phone="+542615001234",
+    )
+
+    svc = EnrichmentService(
+        hubspot=hs, google_places=gp, tavily=tavily,
+        instagram=ig_mock, overwrite=False,
+    )
+
+    company = _company(name="Villa Mansa", city="Mendoza", country="Argentina")
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    tavily.search_instagram_url.assert_awaited_once_with("https://villamansa.com")
+    ig_mock.scrape.assert_awaited_once_with(
+        "https://www.instagram.com/villamansah",
+        hotel_name="Villa Mansa", city="Mendoza",
+    )

@@ -531,3 +531,57 @@ async def test_extract_website_no_instagram_url(service, tavily_client_mock):
     result = await service.extract_website("https://hotel.com")
 
     assert result.instagram_url is None
+
+
+# --- search_instagram_url tests ---
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_url_finds_profile(service, tavily_client_mock):
+    """Search returns Instagram profile URL from results."""
+    tavily_client_mock.search.return_value = {
+        "results": [
+            {"url": "https://www.instagram.com/villamansah/reels/?hl=en", "content": "..."},
+            {"url": "https://www.instagram.com/villamansah/?hl=en", "content": "..."},
+        ],
+    }
+
+    result = await service.search_instagram_url("https://villamansa.com")
+
+    assert result == "https://www.instagram.com/villamansah"
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_url_skips_non_profile(service, tavily_client_mock):
+    """Non-profile paths (explore, reel, p) are skipped."""
+    tavily_client_mock.search.return_value = {
+        "results": [
+            {"url": "https://www.instagram.com/explore/locations/123/", "content": "..."},
+            {"url": "https://www.instagram.com/p/ABC123/", "content": "..."},
+            {"url": "https://www.instagram.com/hotelreal/", "content": "..."},
+        ],
+    }
+
+    result = await service.search_instagram_url("https://hotel.com")
+
+    assert result == "https://www.instagram.com/hotelreal"
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_url_no_results(service, tavily_client_mock):
+    """No results → None."""
+    tavily_client_mock.search.return_value = {"results": []}
+
+    result = await service.search_instagram_url("https://hotel.com")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_search_instagram_url_api_error(service, tavily_client_mock):
+    """API error → None (graceful degradation)."""
+    tavily_client_mock.search.side_effect = Exception("API down")
+
+    result = await service.search_instagram_url("https://hotel.com")
+
+    assert result is None

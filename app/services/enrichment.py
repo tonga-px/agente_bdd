@@ -393,18 +393,26 @@ class EnrichmentService:
             if isinstance(res, BaseException):
                 logger.warning("Optional enrichment task %d failed: %s", i, res)
 
-        # --- Instagram from website link (if not already scraped) ---
-        if (not instagram_data and self._instagram and web_data
-                and web_data.instagram_url):
-            try:
-                instagram_data = await self._instagram.scrape(
-                    web_data.instagram_url, hotel_name=props.name, city=props.city,
-                )
-            except Exception:
-                logger.exception(
-                    "Instagram scrape (from website) failed for company %s",
-                    company.id,
-                )
+        # --- Instagram from website link or search (if not already scraped) ---
+        if not instagram_data and self._instagram:
+            ig_url = (web_data.instagram_url if web_data else None)
+            if not ig_url and self._tavily and website_url:
+                try:
+                    ig_url = await self._tavily.search_instagram_url(website_url)
+                except Exception:
+                    logger.exception(
+                        "Instagram URL search failed for company %s", company.id,
+                    )
+            if ig_url:
+                try:
+                    instagram_data = await self._instagram.scrape(
+                        ig_url, hotel_name=props.name, city=props.city,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Instagram scrape (from website) failed for company %s",
+                        company.id,
+                    )
 
         # --- Merge results ---
         if place is None and ta_location is None:
