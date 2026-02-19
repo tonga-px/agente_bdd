@@ -74,16 +74,19 @@ def get_timezone(country: str | None) -> ZoneInfo:
 
 def next_business_day(
     reference: date, tz: ZoneInfo, country: str | None = None,
+    *, include_reference: bool = False,
 ) -> date:
     """Return the next business day (Mon-Fri, not a national holiday).
 
-    Always advances at least 1 day from *reference*.
+    When *include_reference* is False (default), always advances at least
+    1 day from *reference*.  When True, *reference* itself is returned if
+    it is already a business day.
     """
     iso_code = None
     if country:
         iso_code = COUNTRY_HOLIDAYS.get(country.strip().lower())
 
-    candidate = reference + timedelta(days=1)
+    candidate = reference if include_reference else reference + timedelta(days=1)
 
     for _ in range(30):  # safety cap
         if candidate.weekday() < 5:  # Mon-Fri
@@ -117,13 +120,17 @@ def random_business_time(day: date, tz: ZoneInfo) -> datetime:
 
 
 def compute_task_due_date(country: str | None, now: datetime | None = None) -> str:
-    """Compute the due date for a follow-up task. Returns ISO 8601 UTC string."""
+    """Compute the due date for a follow-up task. Returns ISO 8601 UTC string.
+
+    Returns today with a random business-hour time if today is already a
+    business day; otherwise advances to the next one.
+    """
     tz = get_timezone(country)
     if now is None:
         now = datetime.now(timezone.utc)
 
     local_now = now.astimezone(tz)
-    day = next_business_day(local_now.date(), tz, country)
+    day = next_business_day(local_now.date(), tz, country, include_reference=True)
     utc_dt = random_business_time(day, tz)
     return utc_dt.isoformat()
 

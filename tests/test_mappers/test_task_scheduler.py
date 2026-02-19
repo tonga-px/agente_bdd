@@ -110,6 +110,34 @@ def test_next_business_day_always_advances():
     assert result > wednesday
 
 
+# --- next_business_day include_reference ---
+
+
+def test_next_business_day_include_reference_weekday():
+    """include_reference=True on a weekday → returns same day."""
+    wednesday = date(2026, 2, 18)
+    tz = ZoneInfo("UTC")
+    result = next_business_day(wednesday, tz, include_reference=True)
+    assert result == wednesday
+
+
+def test_next_business_day_include_reference_saturday():
+    """include_reference=True on Saturday → still advances to Monday."""
+    saturday = date(2026, 2, 21)
+    tz = ZoneInfo("UTC")
+    result = next_business_day(saturday, tz, include_reference=True)
+    assert result == date(2026, 2, 23)  # Monday
+
+
+def test_next_business_day_include_reference_holiday():
+    """include_reference=True on a holiday → advances past it."""
+    # May 1, 2026 is Friday (Labour Day in Paraguay)
+    friday_holiday = date(2026, 5, 1)
+    tz = ZoneInfo("America/Asuncion")
+    result = next_business_day(friday_holiday, tz, "Paraguay", include_reference=True)
+    assert result == date(2026, 5, 4)  # Monday
+
+
 # --- random_business_time ---
 
 
@@ -142,10 +170,18 @@ def test_compute_task_due_date_returns_iso():
     assert dt.tzinfo is not None
 
 
-def test_compute_task_due_date_friday_to_monday():
-    """Friday reference → due date is Monday (or later if holiday)."""
-    friday = datetime(2026, 2, 20, 15, 0, tzinfo=timezone.utc)
-    result = compute_task_due_date("Peru", now=friday)
+def test_compute_task_due_date_weekday_returns_same_day():
+    """Wednesday reference → due date is Wednesday (today, a business day)."""
+    wednesday = datetime(2026, 2, 18, 15, 0, tzinfo=timezone.utc)
+    result = compute_task_due_date("Peru", now=wednesday)
+    dt = datetime.fromisoformat(result)
+    local = dt.astimezone(ZoneInfo("America/Lima"))
+    assert local.weekday() == 2  # Wednesday
+
+def test_compute_task_due_date_saturday_to_monday():
+    """Saturday reference → due date is Monday."""
+    saturday = datetime(2026, 2, 21, 15, 0, tzinfo=timezone.utc)
+    result = compute_task_due_date("Peru", now=saturday)
     dt = datetime.fromisoformat(result)
     local = dt.astimezone(ZoneInfo("America/Lima"))
     assert local.weekday() == 0  # Monday
