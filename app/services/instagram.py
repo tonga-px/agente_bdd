@@ -32,9 +32,9 @@ _SYSTEM_PROMPT = (
 )
 
 _USER_PROMPT_TEMPLATE = (
-    'Busco los datos de contacto del perfil de Instagram '
-    'https://www.instagram.com/{username}/ {context}. '
-    'Necesito: nombre completo del perfil, texto de la biografia, '
+    'Busco los datos de contacto del perfil de Instagram @{username} '
+    '{context}. '
+    'Necesito: nombre del perfil, texto de la biografia, '
     'telefonos, email, enlace de WhatsApp, numero de seguidores. '
     'Responde SOLO con un JSON con estos campos: '
     '"full_name", "biography", "external_url", "business_email", '
@@ -163,6 +163,7 @@ class InstagramService:
                         {"role": "system", "content": _SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
+                    "search_domain_filter": ["instagram.com"],
                 },
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
