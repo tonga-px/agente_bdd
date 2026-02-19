@@ -11,7 +11,7 @@ from app.services.enrichment import _normalize_phone
 logger = logging.getLogger(__name__)
 
 _PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
-_PERPLEXITY_MODEL = "sonar-pro"
+_PERPLEXITY_MODEL = "sonar"
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
