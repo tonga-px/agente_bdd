@@ -5,6 +5,7 @@ import re
 from app.exceptions.custom import HubSpotError, RateLimitError
 from app.mappers.address_mapper import parse_address_components
 from app.mappers.field_merger import merge_fields
+from app.mappers.market_fit import compute_market_fit
 from app.mappers.task_scheduler import (
     build_task_body,
     build_task_subject,
@@ -19,6 +20,7 @@ from app.mappers.note_builder import (
 from app.schemas.booking import BookingData
 from app.schemas.instagram import InstagramData
 from app.schemas.responses import CompanyResult, EnrichmentResponse
+from app.schemas.tavily import ReputationData
 from app.services.perplexity import PerplexityService
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
@@ -187,6 +189,7 @@ class EnrichmentService:
         website_scraper: WebsiteScraperService | None = None,
         instagram: "InstagramService | None" = None,
         perplexity: PerplexityService | None = None,
+        tavily: "TavilyService | None" = None,
         overwrite: bool = False,
     ):
         self._hubspot = hubspot
@@ -195,6 +198,7 @@ class EnrichmentService:
         self._website_scraper = website_scraper
         self._instagram = instagram
         self._perplexity = perplexity
+        self._tavily = tavily
         self._overwrite = overwrite
 
     async def resolve_next_company_id(self) -> str | None:
@@ -359,33 +363,35 @@ class EnrichmentService:
                 )
             website_url = None  # Don't web-scrape instagram.com
 
-        # --- Website scraping (isolated, never blocks enrichment) ---
-        web_data: WebScrapedData | None = None
-        if self._website_scraper and website_url:
-            try:
-                web_data = await self._website_scraper.scrape(website_url)
-            except Exception:
-                logger.exception(
-                    "Website scrape failed for company %s, continuing without it",
-                    company.id,
-                )
+        # --- Parallel optional enrichment: website, booking, rooms, reputation ---
+        web_task = self._fetch_website_data(website_url)
+        booking_task = self._fetch_booking_data(props.name, props.city, props.country)
+        rooms_task = self._fetch_room_count(props.name, props.city, props.country)
+        reputation_task = self._fetch_reputation(props.name, props.city, props.country)
 
-        # --- Booking.com via Perplexity (isolated, never blocks enrichment) ---
-        booking_data: BookingData | None = None
-        if self._perplexity:
-            try:
-                booking_data = await self._perplexity.search_booking_data(
-                    hotel_name=props.name or "",
-                    city=props.city,
-                    country=props.country,
-                )
-                if not booking_data.rating and not booking_data.review_count:
-                    booking_data = None
-            except Exception:
-                logger.exception(
-                    "Perplexity search failed for company %s, continuing without it",
-                    company.id,
-                )
+        gather_results = await asyncio.gather(
+            web_task, booking_task, rooms_task, reputation_task,
+            return_exceptions=True,
+        )
+
+        web_data: WebScrapedData | None = (
+            gather_results[0] if not isinstance(gather_results[0], BaseException) else None
+        )
+        booking_data: BookingData | None = (
+            gather_results[1] if not isinstance(gather_results[1], BaseException) else None
+        )
+        if booking_data and not booking_data.rating and not booking_data.review_count:
+            booking_data = None
+        rooms_str: str | None = (
+            gather_results[2] if not isinstance(gather_results[2], BaseException) else None
+        )
+        reputation: ReputationData | None = (
+            gather_results[3] if not isinstance(gather_results[3], BaseException) else None
+        )
+
+        for i, res in enumerate(gather_results):
+            if isinstance(res, BaseException):
+                logger.warning("Optional enrichment task %d failed: %s", i, res)
 
         # --- Merge results ---
         if place is None and ta_location is None:
@@ -440,6 +446,18 @@ class EnrichmentService:
         if booking_data and booking_data.url:
             updates["booking_url"] = booking_data.url
 
+        # Room count from Tavily (only fills empty fields)
+        auto_market_fit: str | None = None
+        if rooms_str and not (props.cantidad_de_habitaciones and props.cantidad_de_habitaciones.strip()):
+            updates["cantidad_de_habitaciones"] = rooms_str
+            updates["habitaciones"] = rooms_str
+            if not (props.market_fit and props.market_fit.strip()):
+                try:
+                    auto_market_fit = compute_market_fit(int(rooms_str))
+                    updates["market_fit"] = auto_market_fit
+                except (ValueError, TypeError):
+                    pass
+
         # Always clear agente
         updates["agente"] = ""
 
@@ -485,6 +503,8 @@ class EnrichmentService:
             props.name, place, ta_location, ta_photos=ta_photos,
             web_data=web_data, booking_data=booking_data,
             instagram_data=instagram_data,
+            rooms_str=rooms_str, auto_market_fit=auto_market_fit,
+            reputation=reputation,
         )
         try:
             await self._hubspot.create_note(company.id, note_body)
@@ -829,3 +849,47 @@ class EnrichmentService:
                 "Contact dedup failed for company %s, enrichment still succeeded",
                 company_id,
             )
+
+    async def _fetch_website_data(self, url: str | None) -> WebScrapedData | None:
+        """Fetch website data: prefer Tavily, fall back to WebsiteScraperService."""
+        if not url:
+            return None
+        if self._tavily:
+            return await self._tavily.extract_website(url)
+        if self._website_scraper:
+            return await self._website_scraper.scrape(url)
+        return None
+
+    async def _fetch_booking_data(
+        self, name: str | None, city: str | None, country: str | None,
+    ) -> BookingData | None:
+        """Fetch Booking.com data: prefer Tavily, fall back to Perplexity."""
+        if self._tavily:
+            return await self._tavily.search_booking_data(
+                hotel_name=name or "", city=city, country=country,
+            )
+        if self._perplexity:
+            return await self._perplexity.search_booking_data(
+                hotel_name=name or "", city=city, country=country,
+            )
+        return None
+
+    async def _fetch_room_count(
+        self, name: str | None, city: str | None, country: str | None,
+    ) -> str | None:
+        """Fetch room count via Tavily search."""
+        if self._tavily:
+            return await self._tavily.search_room_count(
+                hotel_name=name or "", city=city, country=country,
+            )
+        return None
+
+    async def _fetch_reputation(
+        self, name: str | None, city: str | None, country: str | None,
+    ) -> "ReputationData | None":
+        """Fetch multi-platform reputation via Tavily search."""
+        if self._tavily:
+            return await self._tavily.search_reputation(
+                hotel_name=name or "", city=city, country=country,
+            )
+        return None

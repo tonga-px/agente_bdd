@@ -3,6 +3,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
+from app.mappers.market_fit import compute_market_fit
 from app.mappers.note_builder import build_calificar_lead_note, build_error_note
 from app.schemas.hubspot import HubSpotCompany, HubSpotContact, HubSpotEmail, HubSpotLead, HubSpotNote
 from app.schemas.responses import CalificarLeadResponse, LeadAction
@@ -71,14 +72,7 @@ def _truncate(text: str, max_len: int = 500) -> str:
     return text[:max_len] + "..."
 
 
-def _compute_market_fit(rooms: int) -> str:
-    if rooms < 5:
-        return "No es FIT"
-    if rooms <= 13:
-        return "Hormiga"
-    if rooms <= 27:
-        return "Conejo"
-    return "Elefante"
+_compute_market_fit = compute_market_fit  # backward-compat alias
 
 
 class CalificarLeadService:

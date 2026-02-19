@@ -14,3 +14,4 @@ class Settings(BaseSettings):
     elevenlabs_agent_id: str = ""
     elevenlabs_phone_number_id: str = ""
     anthropic_api_key: str = ""
+    tavily_api_key: str = ""

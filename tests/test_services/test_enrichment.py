@@ -6,6 +6,7 @@ import respx
 from httpx import Response
 from unittest.mock import AsyncMock, patch
 
+from app.schemas.booking import BookingData
 from app.schemas.google_places import GooglePlace
 from app.schemas.hubspot import (
     HubSpotCompany,
@@ -17,6 +18,7 @@ from app.schemas.instagram import InstagramData
 from app.schemas.tripadvisor import TripAdvisorLocation
 from app.schemas.website import WebScrapedData
 from app.exceptions.custom import HubSpotError
+from app.schemas.tavily import ReputationData
 from app.services.enrichment import (
     EnrichmentService,
     _dedup_contacts,
@@ -28,6 +30,7 @@ from app.services.enrichment import (
 from app.services.google_places import GooglePlacesService
 from app.services.hubspot import HubSpotService
 from app.services.instagram import InstagramService
+from app.services.tavily import TavilyService
 
 
 @pytest.fixture
@@ -1072,3 +1075,200 @@ async def test_followup_task_failure_doesnt_block(enrichment_service):
 
     assert result.status == "enriched"
     hs.create_task.assert_awaited_once()
+
+
+# --- Tavily integration tests ---
+
+
+@pytest.fixture
+def tavily_enrichment_service():
+    """EnrichmentService with Tavily mock for integration tests."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+
+    tavily = AsyncMock(spec=TavilyService)
+    tavily.extract_website.return_value = WebScrapedData(
+        phones=["+541152630435"],
+        emails=["reservas@hotel.com"],
+        source_url="https://hotel.com",
+    )
+    tavily.search_booking_data.return_value = BookingData(
+        url="https://www.booking.com/hotel/ar/test.html",
+        rating=8.4,
+        review_count=1234,
+    )
+    tavily.search_room_count.return_value = "22"
+    tavily.search_reputation.return_value = ReputationData(
+        google_rating=4.3,
+        google_review_count=500,
+        summary="Hotel muy bueno",
+    )
+
+    svc = EnrichmentService(
+        hubspot=hs, google_places=gp, tavily=tavily, overwrite=False,
+    )
+    return svc, hs, gp, tavily
+
+
+@pytest.mark.asyncio
+async def test_tavily_replaces_website_scraper(tavily_enrichment_service):
+    """Tavily extract used instead of website_scraper."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    company.properties.website = "https://hotel.com"
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    tavily.extract_website.assert_awaited_once()
+    assert "reservas@hotel.com" in result.note
+
+
+@pytest.mark.asyncio
+async def test_tavily_replaces_perplexity_booking(tavily_enrichment_service):
+    """Tavily search used for Booking.com instead of Perplexity."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    tavily.search_booking_data.assert_awaited_once()
+    assert "Booking.com" in result.note
+
+
+@pytest.mark.asyncio
+async def test_tavily_rooms_auto_sets_cantidad_and_market_fit(tavily_enrichment_service):
+    """Tavily room count → auto-sets cantidad_de_habitaciones + market_fit."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    await svc._process_company(company)
+
+    update_calls = hs.update_company.await_args_list
+    main_update = update_calls[-1].args[1]
+    assert main_update.get("cantidad_de_habitaciones") == "22"
+    assert main_update.get("habitaciones") == "22"
+    assert main_update.get("market_fit") == "Conejo"  # 22 rooms
+
+
+@pytest.mark.asyncio
+async def test_tavily_rooms_skips_if_already_set():
+    """Tavily rooms NOT written if company already has cantidad_de_habitaciones."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+    gp.text_search.return_value = _google_place()
+
+    tavily = AsyncMock(spec=TavilyService)
+    tavily.extract_website.return_value = WebScrapedData(source_url="https://hotel.com")
+    tavily.search_booking_data.return_value = BookingData()
+    tavily.search_room_count.return_value = "22"
+    tavily.search_reputation.return_value = None
+
+    svc = EnrichmentService(hubspot=hs, google_places=gp, tavily=tavily)
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    company.properties.cantidad_de_habitaciones = "50"
+    company.properties.market_fit = "Elefante"
+
+    await svc._process_company(company)
+
+    main_update = hs.update_company.await_args_list[-1].args[1]
+    assert "cantidad_de_habitaciones" not in main_update
+    assert "market_fit" not in main_update
+
+
+@pytest.mark.asyncio
+async def test_tavily_reputation_in_note(tavily_enrichment_service):
+    """Tavily reputation data appears in the enrichment note."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    assert "Reputacion" in result.note
+    assert "4.3/5" in result.note
+    assert "Hotel muy bueno" in result.note
+
+
+@pytest.mark.asyncio
+async def test_tavily_graceful_degradation():
+    """Tavily failures → enrichment still completes."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+    gp.text_search.return_value = _google_place()
+
+    tavily = AsyncMock(spec=TavilyService)
+    tavily.extract_website.side_effect = Exception("Tavily down")
+    tavily.search_booking_data.side_effect = Exception("Tavily down")
+    tavily.search_room_count.side_effect = Exception("Tavily down")
+    tavily.search_reputation.side_effect = Exception("Tavily down")
+
+    svc = EnrichmentService(hubspot=hs, google_places=gp, tavily=tavily)
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+
+
+@pytest.mark.asyncio
+async def test_no_tavily_uses_website_scraper_and_perplexity():
+    """Without Tavily, falls back to website_scraper and perplexity."""
+    hs = AsyncMock(spec=HubSpotService)
+    hs.create_note.return_value = None
+    hs.create_contact.return_value = "new-contact-id"
+    hs.get_associated_contacts.return_value = []
+
+    gp = AsyncMock(spec=GooglePlacesService)
+    gp.text_search.return_value = GooglePlace(
+        id="ChIJ_test",
+        formattedAddress="Lima, Peru",
+        websiteUri="https://hotel.com",
+        addressComponents=[
+            {"longText": "Lima", "shortText": "Lima", "types": ["locality"]},
+        ],
+    )
+
+    from app.services.website_scraper import WebsiteScraperService
+    from app.services.perplexity import PerplexityService
+
+    ws = AsyncMock(spec=WebsiteScraperService)
+    ws.scrape.return_value = WebScrapedData(
+        phones=["+541100000000"], source_url="https://hotel.com",
+    )
+
+    perp = AsyncMock(spec=PerplexityService)
+    perp.search_booking_data.return_value = BookingData(rating=7.5)
+
+    svc = EnrichmentService(
+        hubspot=hs, google_places=gp,
+        website_scraper=ws, perplexity=perp, tavily=None,
+    )
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    ws.scrape.assert_awaited_once()
+    perp.search_booking_data.assert_awaited_once()

@@ -6,3 +6,4 @@ pydantic-settings>=2,<3
 beautifulsoup4>=4.12,<5
 holidays>=0.63,<1
 anthropic>=0.80,<1
+tavily-python>=0.5,<1

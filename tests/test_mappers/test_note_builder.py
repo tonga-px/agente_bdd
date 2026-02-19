@@ -9,6 +9,7 @@ from app.mappers.note_builder import (
 from app.schemas.booking import BookingData
 from app.schemas.google_places import DisplayName, GooglePlace
 from app.schemas.instagram import InstagramData
+from app.schemas.tavily import ReputationData
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
 
@@ -483,3 +484,102 @@ def test_instagram_section_escapes_html():
     result = build_enrichment_note("Test", None, None, instagram_data=ig)
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
+
+
+# --- Rooms section tests ---
+
+
+def test_rooms_section_in_note():
+    result = build_enrichment_note(
+        "Test Hotel", None, None, rooms_str="22", auto_market_fit="Conejo",
+    )
+    assert "Habitaciones (auto)" in result
+    assert "22" in result
+    assert "Conejo" in result
+
+
+def test_rooms_section_without_market_fit():
+    result = build_enrichment_note("Test", None, None, rooms_str="10")
+    assert "Habitaciones (auto)" in result
+    assert "10" in result
+    assert "Market Fit" not in result
+
+
+def test_rooms_section_none():
+    result = build_enrichment_note("Test", None, None, rooms_str=None)
+    assert "Habitaciones (auto)" not in result
+
+
+# --- Reputation section tests ---
+
+
+def test_reputation_section_full():
+    rep = ReputationData(
+        google_rating=4.3,
+        google_review_count=1234,
+        tripadvisor_rating=4.5,
+        tripadvisor_review_count=3566,
+        booking_rating=8.4,
+        booking_review_count=2100,
+        summary="Excelente hotel con buenas opiniones.",
+    )
+    result = build_enrichment_note("Test Hotel", None, None, reputation=rep)
+    assert "Reputacion" in result
+    assert "4.3/5" in result
+    assert "1,234 reviews" in result
+    assert "4.5/5" in result
+    assert "3,566 reviews" in result
+    assert "8.4/10" in result
+    assert "2,100 reviews" in result
+    assert "Excelente hotel" in result
+
+
+def test_reputation_section_partial():
+    rep = ReputationData(google_rating=4.0)
+    result = build_enrichment_note("Test", None, None, reputation=rep)
+    assert "Reputacion" in result
+    assert "Google" in result
+    assert "TripAdvisor" not in result
+    assert "Booking" not in result
+
+
+def test_reputation_section_none():
+    result = build_enrichment_note("Test", None, None, reputation=None)
+    assert "Reputacion" not in result
+
+
+def test_reputation_section_empty_data():
+    rep = ReputationData()
+    result = build_enrichment_note("Test", None, None, reputation=rep)
+    assert "Reputacion" not in result
+
+
+def test_reputation_summary_truncated():
+    rep = ReputationData(google_rating=4.0, summary="A" * 400)
+    result = build_enrichment_note("Test", None, None, reputation=rep)
+    assert "A" * 300 + "..." in result
+    assert "A" * 301 + "..." not in result
+
+
+def test_reputation_section_escapes_html():
+    rep = ReputationData(
+        google_rating=4.0,
+        summary="<script>alert('xss')</script>",
+    )
+    result = build_enrichment_note("Test", None, None, reputation=rep)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_rooms_and_reputation_section_order():
+    """Rooms and reputation sections appear after Google Places."""
+    place = GooglePlace(formattedAddress="Lima, Peru")
+    rep = ReputationData(google_rating=4.0)
+    result = build_enrichment_note(
+        "Test", place, None, rooms_str="15", auto_market_fit="Conejo",
+        reputation=rep,
+    )
+    google_pos = result.index("Google Places")
+    rooms_pos = result.index("Habitaciones (auto)")
+    rep_pos = result.index("Reputacion")
+    assert google_pos < rooms_pos < rep_pos

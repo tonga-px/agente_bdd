@@ -4,6 +4,7 @@ from html import escape
 from app.schemas.booking import BookingData
 from app.schemas.google_places import GooglePlace
 from app.schemas.instagram import InstagramData
+from app.schemas.tavily import ReputationData
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
 
@@ -295,6 +296,46 @@ def _format_booking_section(booking: BookingData) -> str | None:
     return f"<h3>Booking.com</h3><ul>{''.join(rows)}</ul>"
 
 
+def _format_rooms_section(rooms_str: str, market_fit: str | None) -> str | None:
+    rows: list[str] = []
+    rows.append(f"<li><strong>Habitaciones:</strong> {escape(rooms_str)}</li>")
+    if market_fit:
+        rows.append(f"<li><strong>Market Fit:</strong> {escape(market_fit)}</li>")
+    return f"<h3>Habitaciones (auto)</h3><ul>{''.join(rows)}</ul>"
+
+
+def _format_reputation_section(reputation: ReputationData) -> str | None:
+    rows: list[str] = []
+
+    if reputation.google_rating is not None:
+        text = f"\u2b50 {reputation.google_rating}/5"
+        if reputation.google_review_count is not None:
+            text += f" ({reputation.google_review_count:,} reviews)"
+        rows.append(f"<li><strong>Google:</strong> {text}</li>")
+
+    if reputation.tripadvisor_rating is not None:
+        text = f"\u2b50 {reputation.tripadvisor_rating}/5"
+        if reputation.tripadvisor_review_count is not None:
+            text += f" ({reputation.tripadvisor_review_count:,} reviews)"
+        rows.append(f"<li><strong>TripAdvisor:</strong> {text}</li>")
+
+    if reputation.booking_rating is not None:
+        text = f"\u2b50 {reputation.booking_rating}/10"
+        if reputation.booking_review_count is not None:
+            text += f" ({reputation.booking_review_count:,} reviews)"
+        rows.append(f"<li><strong>Booking:</strong> {text}</li>")
+
+    if reputation.summary:
+        summary = reputation.summary
+        if len(summary) > 300:
+            summary = summary[:300] + "..."
+        rows.append(f"<li><strong>Resumen:</strong> {escape(summary)}</li>")
+
+    if not rows:
+        return None
+    return f"<h3>Reputacion</h3><ul>{''.join(rows)}</ul>"
+
+
 def build_merge_note(
     company_name: str | None,
     merged_id: str,
@@ -405,6 +446,9 @@ def build_enrichment_note(
     web_data: WebScrapedData | None = None,
     booking_data: BookingData | None = None,
     instagram_data: InstagramData | None = None,
+    rooms_str: str | None = None,
+    auto_market_fit: str | None = None,
+    reputation: ReputationData | None = None,
 ) -> str:
     """Build an HTML enrichment summary for a HubSpot note."""
     title = escape(company_name or "Empresa")
@@ -443,6 +487,16 @@ def build_enrichment_note(
         section = _format_google_section(place)
         if section:
             parts.append(section)
+
+    if rooms_str:
+        rooms_section = _format_rooms_section(rooms_str, auto_market_fit)
+        if rooms_section:
+            parts.append(rooms_section)
+
+    if reputation:
+        rep_section = _format_reputation_section(reputation)
+        if rep_section:
+            parts.append(rep_section)
 
     if not place and not ta_location:
         parts.append("<p>No se encontraron datos en ninguna fuente.</p>")

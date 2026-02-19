@@ -36,6 +36,7 @@ from app.services.perplexity import PerplexityService
 from app.services.instagram import InstagramService
 from app.services.calificar_lead import CalificarLeadService
 from app.services.claude import ClaudeService
+from app.services.tavily import TavilyService
 from app.services.website_scraper import WebsiteScraperService
 
 
@@ -64,11 +65,16 @@ async def lifespan(app: FastAPI):
         if settings.perplexity_api_key:
             perplexity = PerplexityService(client, settings.perplexity_api_key)
 
+        tavily: TavilyService | None = None
+        if settings.tavily_api_key:
+            tavily = TavilyService(settings.tavily_api_key)
+
         enrichment = EnrichmentService(
             hubspot, google_places, tripadvisor=tripadvisor,
             website_scraper=website_scraper,
             instagram=None,
             perplexity=perplexity,
+            tavily=tavily,
             overwrite=settings.overwrite_existing,
         )
 
