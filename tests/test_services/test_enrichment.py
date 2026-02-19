@@ -19,8 +19,10 @@ from app.schemas.website import WebScrapedData
 from app.exceptions.custom import HubSpotError
 from app.services.enrichment import (
     EnrichmentService,
+    _dedup_contacts,
     _extract_conflicting_id,
     _is_same_company,
+    _merge_contact_fields,
     _normalize_phone,
 )
 from app.services.google_places import GooglePlacesService
@@ -845,3 +847,186 @@ async def test_instagram_url_triggers_instagram_scrape():
         hotel_name="Hotel Itapúa", city="Asunción",
     )
     ws_mock.scrape.assert_not_awaited()  # website scraper not called for IG URLs
+
+
+# --- _dedup_contacts pure tests ---
+
+
+def _dedup_contact(cid="100", email=None, phone=None, mobile=None, whatsapp=None):
+    return HubSpotContact(
+        id=cid,
+        properties=HubSpotContactProperties(
+            email=email,
+            phone=phone,
+            mobilephone=mobile,
+            hs_whatsapp_phone_number=whatsapp,
+        ),
+    )
+
+
+def test_dedup_no_duplicates():
+    """Contacts with no shared identity → no groups."""
+    c1 = _dedup_contact("1", email="a@test.com")
+    c2 = _dedup_contact("2", email="b@test.com")
+    assert _dedup_contacts([c1, c2]) == []
+
+
+def test_dedup_same_phone():
+    """Same phone digits → grouped, keeper has more data."""
+    c1 = _dedup_contact("1", phone="+52 55 1234 5678")
+    c2 = _dedup_contact("2", phone="525512345678", email="x@test.com")
+    groups = _dedup_contacts([c1, c2])
+    assert len(groups) == 1
+    keeper, dups = groups[0]
+    assert keeper.id == "2"  # c2 has more identity fields (phone + email)
+    assert [d.id for d in dups] == ["1"]
+
+
+def test_dedup_same_email_case_insensitive():
+    """Emails differing only in case → duplicates."""
+    c1 = _dedup_contact("1", email="Hotel@Test.COM")
+    c2 = _dedup_contact("2", email="hotel@test.com")
+    groups = _dedup_contacts([c1, c2])
+    assert len(groups) == 1
+
+
+def test_dedup_phone_format_variations():
+    """Phone with different formatting but same digits → duplicate."""
+    c1 = _dedup_contact("1", phone="+34 911 234 567")
+    c2 = _dedup_contact("2", phone="34911234567")
+    groups = _dedup_contacts([c1, c2])
+    assert len(groups) == 1
+
+
+def test_dedup_transitivity():
+    """A↔B by phone, B↔C by email → all three grouped."""
+    c1 = _dedup_contact("1", phone="+5215551234567")
+    c2 = _dedup_contact("2", phone="+5215551234567", email="b@test.com")
+    c3 = _dedup_contact("3", email="b@test.com")
+    groups = _dedup_contacts([c1, c2, c3])
+    assert len(groups) == 1
+    keeper, dups = groups[0]
+    assert keeper.id == "2"  # c2 has 2 identity fields
+    assert len(dups) == 2
+
+
+def test_dedup_whatsapp_identity():
+    """WhatsApp phone number as identity field."""
+    c1 = _dedup_contact("1", phone="+525512345678")
+    c2 = _dedup_contact("2", whatsapp="+525512345678")
+    groups = _dedup_contacts([c1, c2])
+    assert len(groups) == 1
+
+
+def test_dedup_tie_lowest_id_wins():
+    """Equal identity field count → lowest ID (oldest) is keeper."""
+    c1 = _dedup_contact("10", email="same@test.com")
+    c2 = _dedup_contact("20", email="same@test.com")
+    groups = _dedup_contacts([c1, c2])
+    assert len(groups) == 1
+    keeper, dups = groups[0]
+    assert keeper.id == "10"
+    assert dups[0].id == "20"
+
+
+def test_dedup_single_contact():
+    """Single contact → nothing to dedup."""
+    assert _dedup_contacts([_dedup_contact("1", email="a@test.com")]) == []
+
+
+def test_dedup_empty_list():
+    """Empty list → nothing to dedup."""
+    assert _dedup_contacts([]) == []
+
+
+def test_dedup_mobilephone_matches_phone():
+    """mobilephone field matching phone field → duplicate."""
+    c1 = _dedup_contact("1", phone="+525512345678")
+    c2 = _dedup_contact("2", mobile="+525512345678")
+    groups = _dedup_contacts([c1, c2])
+    assert len(groups) == 1
+
+
+# --- _merge_contact_fields pure tests ---
+
+
+def test_merge_copies_missing_fields():
+    """Merge fills empty fields from duplicate."""
+    keeper = _dedup_contact("1", phone="+52551234")
+    dup = _dedup_contact("2", phone="+52551234", email="dup@test.com", whatsapp="+5255999")
+    updates = _merge_contact_fields(keeper, dup)
+    assert updates == {"email": "dup@test.com", "hs_whatsapp_phone_number": "+5255999"}
+
+
+def test_merge_does_not_overwrite():
+    """Merge never overwrites existing keeper fields."""
+    keeper = _dedup_contact("1", email="keeper@test.com", phone="+52551234")
+    dup = _dedup_contact("2", email="dup@test.com", phone="+52559999")
+    updates = _merge_contact_fields(keeper, dup)
+    assert updates == {}
+
+
+def test_merge_empty_duplicate():
+    """Duplicate with no fields → no updates."""
+    keeper = _dedup_contact("1", email="a@test.com")
+    dup = _dedup_contact("2")
+    assert _merge_contact_fields(keeper, dup) == {}
+
+
+# --- _deduplicate_contacts async tests ---
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_zero_contacts(service, hubspot_mock):
+    """No contacts → no API calls beyond get_associated_contacts."""
+    hubspot_mock.get_associated_contacts.return_value = []
+    await service._deduplicate_contacts("C1")
+    hubspot_mock.update_contact.assert_not_awaited()
+    hubspot_mock.delete_contact.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_one_contact(service, hubspot_mock):
+    """Single contact → nothing to dedup."""
+    hubspot_mock.get_associated_contacts.return_value = [
+        _dedup_contact("100", email="a@test.com"),
+    ]
+    await service._deduplicate_contacts("C1")
+    hubspot_mock.update_contact.assert_not_awaited()
+    hubspot_mock.delete_contact.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_merges_and_deletes(service, hubspot_mock):
+    """Duplicate by phone → keeper updated with missing fields, dup deleted."""
+    hubspot_mock.get_associated_contacts.return_value = [
+        _dedup_contact("10", phone="+525512345678"),
+        _dedup_contact("20", phone="525512345678", email="dup@test.com"),
+    ]
+    await service._deduplicate_contacts("C1")
+
+    # Keeper is 20 (more identity fields), duplicate is 10
+    # Keeper 20 already has email, dup 10 has no extra fields → no update needed
+    # But dup 10 has no email, keeper 20 has email → nothing to merge from 10
+    hubspot_mock.delete_contact.assert_awaited_once_with("10")
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_get_contacts_failure_graceful(service, hubspot_mock):
+    """Failure in get_associated_contacts → no exception raised."""
+    hubspot_mock.get_associated_contacts.side_effect = Exception("API down")
+    await service._deduplicate_contacts("C1")  # should not raise
+    hubspot_mock.delete_contact.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_delete_failure_continues(service, hubspot_mock):
+    """Failure deleting one dup doesn't block deleting the next."""
+    hubspot_mock.get_associated_contacts.return_value = [
+        _dedup_contact("1", email="same@test.com"),
+        _dedup_contact("2", email="same@test.com"),
+        _dedup_contact("3", email="same@test.com"),
+    ]
+    hubspot_mock.delete_contact.side_effect = [Exception("fail"), None]
+    await service._deduplicate_contacts("C1")  # should not raise
+    assert hubspot_mock.delete_contact.await_count == 2

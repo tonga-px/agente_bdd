@@ -21,6 +21,7 @@ ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/companies"
 
 CONTACT_PROPERTIES = [
     "firstname", "lastname", "email", "phone", "mobilephone", "jobtitle",
+    "hs_whatsapp_phone_number",
 ]
 
 SEARCH_PROPERTIES = [
@@ -282,6 +283,17 @@ class HubSpotService:
             raise HubSpotError(resp.text, status_code=resp.status_code)
 
         logger.info("Updated contact %s", contact_id)
+
+    async def delete_contact(self, contact_id: str) -> None:
+        url = f"{CONTACTS_URL}/{contact_id}"
+        resp = await self._client.delete(url, headers=self._headers)
+
+        if resp.status_code == 429:
+            raise RateLimitError("HubSpot")
+        if resp.status_code >= 400:
+            raise HubSpotError(resp.text, status_code=resp.status_code)
+
+        logger.info("Deleted contact %s", contact_id)
 
     async def upload_file(
         self, filename: str, content: bytes, content_type: str = "audio/mpeg"

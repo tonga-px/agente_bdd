@@ -30,6 +30,7 @@ class HubSpotContactProperties(BaseModel):
     phone: str | None = None
     mobilephone: str | None = None
     jobtitle: str | None = None
+    hs_whatsapp_phone_number: str | None = None
 
 
 class HubSpotContact(BaseModel):

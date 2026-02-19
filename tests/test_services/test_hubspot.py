@@ -243,3 +243,35 @@ async def test_merge_companies_error():
             await service.merge_companies(COMPANY_ID, "99999")
 
     assert exc_info.value.status_code == 400
+
+
+# --- delete_contact tests ---
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_delete_contact_success():
+    respx.delete(CONTACT_ENDPOINT).mock(
+        return_value=Response(204)
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        await service.delete_contact(CONTACT_ID)
+
+    assert respx.calls.last.request.method == "DELETE"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_delete_contact_not_found():
+    respx.delete(CONTACT_ENDPOINT).mock(
+        return_value=Response(404, text="not found")
+    )
+
+    async with httpx.AsyncClient() as client:
+        service = HubSpotService(client, "test-token")
+        with pytest.raises(HubSpotError) as exc_info:
+            await service.delete_contact(CONTACT_ID)
+
+    assert exc_info.value.status_code == 404

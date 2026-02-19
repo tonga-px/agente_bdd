@@ -18,7 +18,7 @@ from app.services.perplexity import PerplexityService
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
 from app.schemas.google_places import GooglePlace
-from app.schemas.hubspot import HubSpotCompanyProperties
+from app.schemas.hubspot import HubSpotCompanyProperties, HubSpotContact
 from app.schemas.tripadvisor import TripAdvisorLocation
 from app.schemas.website import WebScrapedData
 from app.services.tripadvisor import TripAdvisorService, clean_name
@@ -82,6 +82,91 @@ def _is_same_company(
         return False
 
     return True
+
+
+def _contact_identity_keys(contact: HubSpotContact) -> set[str]:
+    """Return normalized identity keys for a contact (for dedup grouping)."""
+    keys: set[str] = set()
+    p = contact.properties
+    if p.email and p.email.strip():
+        keys.add(f"email:{p.email.strip().lower()}")
+    for phone_val in (p.phone, p.mobilephone, p.hs_whatsapp_phone_number):
+        if phone_val and phone_val.strip():
+            digits = "".join(ch for ch in phone_val if ch.isdigit())
+            if digits:
+                keys.add(f"phone:{digits}")
+    return keys
+
+
+def _dedup_contacts(
+    contacts: list[HubSpotContact],
+) -> list[tuple[HubSpotContact, list[HubSpotContact]]]:
+    """Group contacts that share any identity field (transitive via Union-Find).
+
+    Returns list of (keeper, [duplicates]) for groups with duplicates.
+    Keeper = most identity fields filled; ties broken by lowest ID (oldest).
+    """
+    if len(contacts) < 2:
+        return []
+
+    # Union-Find
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    # Build identity key → contact id mapping, and union contacts sharing keys
+    key_to_cid: dict[str, str] = {}
+    cid_keys: dict[str, set[str]] = {}
+
+    for c in contacts:
+        keys = _contact_identity_keys(c)
+        cid_keys[c.id] = keys
+        for k in keys:
+            if k in key_to_cid:
+                union(c.id, key_to_cid[k])
+            else:
+                key_to_cid[k] = c.id
+
+    # Group contacts by root
+    groups: dict[str, list[HubSpotContact]] = {}
+    for c in contacts:
+        root = find(c.id)
+        groups.setdefault(root, []).append(c)
+
+    # For each group with >1 member, pick keeper
+    result: list[tuple[HubSpotContact, list[HubSpotContact]]] = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        # Sort: most identity fields desc, then lowest ID asc
+        members.sort(key=lambda c: (-len(cid_keys[c.id]), int(c.id)))
+        keeper = members[0]
+        duplicates = members[1:]
+        result.append((keeper, duplicates))
+
+    return result
+
+
+def _merge_contact_fields(
+    keeper: HubSpotContact, duplicate: HubSpotContact,
+) -> dict[str, str]:
+    """Return identity fields the keeper is missing but the duplicate has."""
+    updates: dict[str, str] = {}
+    for field in ("email", "phone", "mobilephone", "hs_whatsapp_phone_number"):
+        keeper_val = getattr(keeper.properties, field) or ""
+        dup_val = getattr(duplicate.properties, field) or ""
+        if not keeper_val.strip() and dup_val.strip():
+            updates[field] = dup_val.strip()
+    return updates
 
 
 HUBSPOT_DELAY = 0.5  # seconds between HubSpot calls
@@ -426,6 +511,9 @@ class EnrichmentService:
             instagram_data=instagram_data,
         )
 
+        # --- Deduplicate contacts (best-effort) ---
+        await self._deduplicate_contacts(company.id)
+
         return CompanyResult(
             company_id=company.id,
             company_name=props.name,
@@ -652,5 +740,58 @@ class EnrichmentService:
         except Exception:
             logger.exception(
                 "Failed to create contacts for company %s, enrichment still succeeded",
+                company_id,
+            )
+
+    async def _deduplicate_contacts(self, company_id: str) -> None:
+        """Remove duplicate contacts for a company (best-effort, never blocks enrichment)."""
+        try:
+            contacts = await self._hubspot.get_associated_contacts(company_id)
+            if len(contacts) < 2:
+                return
+
+            groups = _dedup_contacts(contacts)
+            if not groups:
+                return
+
+            logger.info(
+                "Deduplicating contacts for company %s: %d groups",
+                company_id, len(groups),
+            )
+
+            for keeper, duplicates in groups:
+                # Accumulate merge updates from all duplicates
+                all_updates: dict[str, str] = {}
+                for dup in duplicates:
+                    for field, value in _merge_contact_fields(keeper, dup).items():
+                        if field not in all_updates:
+                            all_updates[field] = value
+
+                # Update keeper with merged fields
+                if all_updates:
+                    try:
+                        await self._hubspot.update_contact(keeper.id, all_updates)
+                    except Exception:
+                        logger.exception(
+                            "Failed to update keeper contact %s during dedup",
+                            keeper.id,
+                        )
+
+                # Delete duplicates
+                for dup in duplicates:
+                    try:
+                        await self._hubspot.delete_contact(dup.id)
+                        logger.info(
+                            "Deleted duplicate contact %s (keeper: %s)",
+                            dup.id, keeper.id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to delete duplicate contact %s", dup.id,
+                        )
+
+        except Exception:
+            logger.exception(
+                "Contact dedup failed for company %s, enrichment still succeeded",
                 company_id,
             )
