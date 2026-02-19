@@ -119,11 +119,16 @@ def random_business_time(day: date, tz: ZoneInfo) -> datetime:
     return local_dt.astimezone(timezone.utc)
 
 
+MIN_FUTURE_MINUTES = 10
+
+
 def compute_task_due_date(country: str | None, now: datetime | None = None) -> str:
     """Compute the due date for a follow-up task. Returns ISO 8601 UTC string.
 
     Returns today with a random business-hour time if today is already a
-    business day; otherwise advances to the next one.
+    business day; otherwise advances to the next one.  The result is
+    guaranteed to be at least MIN_FUTURE_MINUTES ahead of *now*.  If that
+    would push past 17:00 local, the task moves to the next business day.
     """
     tz = get_timezone(country)
     if now is None:
@@ -132,6 +137,19 @@ def compute_task_due_date(country: str | None, now: datetime | None = None) -> s
     local_now = now.astimezone(tz)
     day = next_business_day(local_now.date(), tz, country, include_reference=True)
     utc_dt = random_business_time(day, tz)
+
+    min_dt = now + timedelta(minutes=MIN_FUTURE_MINUTES)
+
+    if utc_dt < min_dt and day == local_now.date():
+        # Random time fell in the past (or too close) — push to now + 10 min
+        local_min = min_dt.astimezone(tz)
+        if local_min.hour < 17:
+            utc_dt = min_dt
+        else:
+            # Past 17:00 local → move to next business day
+            day = next_business_day(local_now.date(), tz, country)
+            utc_dt = random_business_time(day, tz)
+
     return utc_dt.isoformat()
 
 

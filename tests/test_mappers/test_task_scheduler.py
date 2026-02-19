@@ -1,6 +1,6 @@
 """Tests for task_scheduler mapper (pure functions, no I/O)."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -171,12 +171,14 @@ def test_compute_task_due_date_returns_iso():
 
 
 def test_compute_task_due_date_weekday_returns_same_day():
-    """Wednesday reference → due date is Wednesday (today, a business day)."""
+    """Wednesday morning → due date is Wednesday (today, a business day)."""
+    # 15:00 UTC = 10:00 Peru (morning, plenty of room for random time)
     wednesday = datetime(2026, 2, 18, 15, 0, tzinfo=timezone.utc)
     result = compute_task_due_date("Peru", now=wednesday)
     dt = datetime.fromisoformat(result)
     local = dt.astimezone(ZoneInfo("America/Lima"))
     assert local.weekday() == 2  # Wednesday
+
 
 def test_compute_task_due_date_saturday_to_monday():
     """Saturday reference → due date is Monday."""
@@ -185,6 +187,26 @@ def test_compute_task_due_date_saturday_to_monday():
     dt = datetime.fromisoformat(result)
     local = dt.astimezone(ZoneInfo("America/Lima"))
     assert local.weekday() == 0  # Monday
+
+
+def test_compute_task_due_date_always_in_future():
+    """Result is always at least 10 minutes ahead of now."""
+    # 18:00 UTC = 13:00 Peru → random could pick morning (in the past)
+    now = datetime(2026, 2, 18, 18, 0, tzinfo=timezone.utc)
+    for _ in range(50):
+        result = compute_task_due_date("Peru", now=now)
+        dt = datetime.fromisoformat(result)
+        assert dt >= now + timedelta(minutes=10)
+
+
+def test_compute_task_due_date_late_afternoon_goes_to_next_day():
+    """If now+10min is past 17:00 local, task moves to next business day."""
+    # 21:55 UTC = 16:55 Peru → now+10min = 17:05 local → next day
+    now = datetime(2026, 2, 18, 21, 55, tzinfo=timezone.utc)
+    result = compute_task_due_date("Peru", now=now)
+    dt = datetime.fromisoformat(result)
+    local = dt.astimezone(ZoneInfo("America/Lima"))
+    assert local.date() > now.astimezone(ZoneInfo("America/Lima")).date()
 
 
 def test_compute_task_due_date_none_country():
