@@ -32,12 +32,12 @@ _SYSTEM_PROMPT = (
 )
 
 _USER_PROMPT_TEMPLATE = (
-    'Search for the public Instagram profile @{username} '
-    '(https://www.instagram.com/{username}/){context}. '
-    'What is their display name, biography text, phone numbers, '
-    'email, WhatsApp link, and follower count? '
+    'What publicly available information can you find about the Instagram '
+    'account @{username}{context}? '
+    'I need their biography text, contact phone numbers, '
+    'email addresses, any WhatsApp links, and follower count. '
     'Return a JSON object with exactly these fields: '
-    '"full_name" (profile display name or null), '
+    '"full_name" (display name or null), '
     '"biography" (bio text or null), '
     '"external_url" (link in bio or null), '
     '"business_email" (contact email or null), '
