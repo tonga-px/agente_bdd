@@ -11,7 +11,7 @@ pip install -e ".[dev]"
 # Run locally
 uvicorn app.main:app --reload --port 8000
 
-# Tests (278 total)
+# Tests (320 total)
 pytest
 pytest tests/test_services/test_enrichment.py -v          # single file
 pytest tests/test_services/test_enrichment.py::test_name  # single test
@@ -24,7 +24,7 @@ FastAPI async app deployed on Railway. Single web process, no DB, no background 
 
 **Two main flows:**
 
-1. **Enrichment** (`POST /datos` → 202, `POST /datos/sync` → 200): HubSpot search → set agente="pendiente" → Google Places text_search → TripAdvisor (optional) → website scraping (optional) → Booking.com via Perplexity (optional) → mappers → HubSpot update (with id_hotel conflict handling) + note + contacts → agente=""
+1. **Enrichment** (`POST /datos` → 202, `POST /datos/sync` → 200): HubSpot search → set agente="pendiente" → Google Places text_search → Instagram via Perplexity (if website is instagram.com) → TripAdvisor (optional) → website scraping (optional) → Booking.com via Perplexity (optional) → mappers → HubSpot update (with id_hotel conflict handling) + note + contacts → agente=""
 2. **Prospeccion** (`POST /llamada_prospeccion` → 202): HubSpot lookup → set agente="pendiente" → build phone list → ElevenLabs outbound call → poll for result → extract data → HubSpot update + note + decision-maker contact + call recording → agente=""
 
 Jobs are polled via `GET /jobs/{job_id}`. Duplicate jobs for the same task+company are rejected with 409.
@@ -58,6 +58,7 @@ Jobs are polled via `GET /jobs/{job_id}`. Duplicate jobs for the same task+compa
 - **HubSpot associations**: notes→companies = 190, calls→companies = **182** (NOT 220)
 - **HubSpot merge API**: `POST /crm/v3/objects/companies/merge` with `primaryObjectId` + `objectIdToMerge`. Used to merge duplicate companies detected via id_hotel conflict.
 - **HubSpot Files API**: `folderPath` is a separate form field, NOT inside the `options` JSON
+- **Instagram via Perplexity**: when hotel's website URL is `instagram.com`, `InstagramService` uses Perplexity `sonar-pro` model with `search_domain_filter: ["instagram.com"]` to extract profile data (name, bio, phones, email, WhatsApp, followers). Data goes to enrichment note + creates "/ Instagram" contact. `sonar` model refuses Instagram content; only `sonar-pro` works. Uses `PERPLEXITY_API_KEY` (same key as Booking search).
 - **Booking.com via Perplexity**: replaced DuckDuckGo search + HTML scraping with a single Perplexity Sonar API call. `PerplexityService.search_booking_data()` asks for structured JSON (url, rating, review_count, hotel_name) and parses the response. Returns `BookingData` schema unchanged. `app/services/booking.py` still exists but is no longer used in the main flow.
 - **Mappers** (`app/mappers/`) are pure functions — no I/O, no side effects, easy to test
 - **Schemas** use modern `str | None` syntax (Python 3.11+), Pydantic BaseModel throughout
