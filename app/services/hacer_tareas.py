@@ -87,6 +87,10 @@ class HacerTareasService:
 
         # 3. Check business hour (outside hours → silent skip, cron retries)
         if not is_business_hour(country):
+            logger.info(
+                "Task %s skipped: outside_hours (country=%r, company=%s)",
+                task_id, country, company_id,
+            )
             return TaskResult(
                 task_id=task_id,
                 task_subject=subject,
@@ -100,6 +104,10 @@ class HacerTareasService:
         if not is_business_day(country):
             new_due = compute_task_due_date(country)
             await self._hubspot.update_task(task_id, {"hs_timestamp": new_due})
+            logger.info(
+                "Task %s rescheduled: not a business day (country=%r, moved to %s)",
+                task_id, country, new_due,
+            )
             return TaskResult(
                 task_id=task_id,
                 task_subject=subject,
@@ -111,6 +119,10 @@ class HacerTareasService:
 
         # 5. Check if company already has an active agent
         if company.properties.agente:
+            logger.info(
+                "Task %s skipped: company_busy (agente=%r, company=%s)",
+                task_id, company.properties.agente, company_id,
+            )
             return TaskResult(
                 task_id=task_id,
                 task_subject=subject,
