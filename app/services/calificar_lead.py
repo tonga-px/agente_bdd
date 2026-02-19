@@ -32,6 +32,35 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _fix_encoding(text: str) -> str:
+    """Fix double-encoded UTF-8 (UTF-8 bytes decoded as Latin-1)."""
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+
+    result: list[str] = []
+    buf = bytearray()
+    for ch in text:
+        if ord(ch) <= 0xFF:
+            buf.append(ord(ch))
+        else:
+            if buf:
+                try:
+                    result.append(buf.decode("utf-8"))
+                except UnicodeDecodeError:
+                    result.append(buf.decode("latin-1"))
+                buf = bytearray()
+            result.append(ch)
+    if buf:
+        try:
+            result.append(buf.decode("utf-8"))
+        except UnicodeDecodeError:
+            result.append(buf.decode("latin-1"))
+
+    return "".join(result)
+
+
 def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
@@ -147,10 +176,12 @@ class CalificarLeadService:
                 message="Claude analysis returned no results",
             )
 
-        # Extract and validate results
+        # Extract and validate results (fix double-encoded UTF-8 from note context)
         rooms_str = analysis.get("cantidad_de_habitaciones")
         market_fit = analysis.get("market_fit")
         reasoning = analysis.get("razonamiento", "")
+        if reasoning:
+            reasoning = _fix_encoding(reasoning)
 
         # If Claude gave rooms but no valid market_fit, compute it
         if rooms_str and market_fit not in VALID_MARKET_FITS:
@@ -294,7 +325,7 @@ class CalificarLeadService:
             for n in notes[:10]:
                 body = n.properties.get("hs_note_body", "")
                 if body:
-                    clean = _truncate(_strip_html(body))
+                    clean = _fix_encoding(_truncate(_strip_html(body)))
                     ts = n.properties.get("hs_timestamp", "")
                     parts.append(f"- [{ts}] {clean}")
 
@@ -308,7 +339,7 @@ class CalificarLeadService:
                 status = c_props.get("hs_call_status", "")
                 line = f"- [{ts}] {direction} ({status})"
                 if body:
-                    line += f": {_truncate(_strip_html(body), 300)}"
+                    line += f": {_fix_encoding(_truncate(_strip_html(body), 300))}"
                 parts.append(line)
 
         if emails:

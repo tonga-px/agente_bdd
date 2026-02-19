@@ -16,6 +16,7 @@ from app.schemas.responses import LeadAction
 from app.services.calificar_lead import (
     CalificarLeadService,
     _compute_market_fit,
+    _fix_encoding,
 )
 from app.services.claude import ClaudeService
 from app.services.hubspot import HubSpotService
@@ -393,3 +394,62 @@ async def test_no_fit_lead_without_owner_skips_task():
     # Only stage_updated, no task_created
     assert len(result.lead_actions) == 1
     assert result.lead_actions[0].action == "stage_updated"
+
+
+def test_fix_encoding_double_encoded():
+    # "Según" double-encoded: UTF-8 bytes of "ú" (0xC3 0xBA) stored as Latin-1
+    double_encoded = "Seg\u00c3\u00ban la nota"
+    assert _fix_encoding(double_encoded) == "Según la nota"
+
+
+def test_fix_encoding_already_clean():
+    clean = "Según la nota del hotel"
+    assert _fix_encoding(clean) == clean
+
+
+@respx.mock
+async def test_reasoning_encoding_fixed():
+    """Double-encoded reasoning from Claude is fixed in the response."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "10",
+            "market_fit": "Hormiga",
+            "razonamiento": "Seg\u00c3\u00ban la nota, tiene 10 habitaciones.",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    assert "Según" in result.reasoning
+    assert "\u00c3" not in result.reasoning
+
+
+@respx.mock
+async def test_prompt_fixes_double_encoded_notes():
+    """Double-encoded note bodies are fixed before sending to Claude."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        service = CalificarLeadService(hubspot, claude)
+
+        company = _make_company()
+        # Note body with double-encoded "ó"
+        notes = [HubSpotNote(id="n1", properties={
+            "hs_note_body": "Informaci\u00c3\u00b3n del hotel",
+            "hs_timestamp": "2024-01-01",
+        })]
+
+        prompt = service._build_user_prompt(company, notes, [], [], [])
+
+    assert "Información del hotel" in prompt
+    assert "\u00c3" not in prompt
