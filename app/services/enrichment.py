@@ -405,8 +405,15 @@ class EnrichmentService:
                     )
             if ig_url:
                 try:
-                    instagram_data = await self._instagram.scrape(
+                    scraped = await self._instagram.scrape(
                         ig_url, hotel_name=props.name, city=props.city,
+                    )
+                    # Only keep reliable fields (profile + followers);
+                    # contact data from search results is often from other profiles
+                    instagram_data = InstagramData(
+                        username=scraped.username,
+                        profile_url=scraped.profile_url,
+                        follower_count=scraped.follower_count,
                     )
                 except Exception:
                     logger.exception(

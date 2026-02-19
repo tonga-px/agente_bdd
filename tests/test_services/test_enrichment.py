@@ -1327,6 +1327,10 @@ async def test_instagram_from_website_link():
         "https://www.instagram.com/villamansawinehotel",
         hotel_name="Villa Mansa", city="Mendoza",
     )
+    # Only profile + followers kept (contact data is unreliable from search)
+    assert "Instagram" in result.note
+    assert "@villamansawinehotel" in result.note
+    assert "+542615001234" not in result.note  # business_phone stripped
 
 
 @pytest.mark.asyncio
