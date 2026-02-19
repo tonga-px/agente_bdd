@@ -32,20 +32,15 @@ _SYSTEM_PROMPT = (
 )
 
 _USER_PROMPT_TEMPLATE = (
-    'What publicly available information can you find about the Instagram '
-    'account @{username}{context}? '
-    'I need their biography text, contact phone numbers, '
-    'email addresses, any WhatsApp links, and follower count. '
-    'Return a JSON object with exactly these fields: '
-    '"full_name" (display name or null), '
-    '"biography" (bio text or null), '
-    '"external_url" (link in bio or null), '
-    '"business_email" (contact email or null), '
-    '"business_phone" (contact phone or null), '
-    '"follower_count" (number of followers as integer, or null), '
-    '"whatsapp_url" (any WhatsApp link wa.me/*, wa.link/*, '
-    'api.whatsapp.com/* or null). '
-    'If a field is not available, use null.'
+    'Busco los datos de contacto del perfil de Instagram '
+    'https://www.instagram.com/{username}/ {context}. '
+    'Necesito: nombre completo del perfil, texto de la biografia, '
+    'telefonos, email, enlace de WhatsApp, numero de seguidores. '
+    'Responde SOLO con un JSON con estos campos: '
+    '"full_name", "biography", "external_url", "business_email", '
+    '"business_phone", "follower_count", '
+    '"whatsapp_url" (enlace wa.me/wa.link si existe). '
+    'Usa null si no encuentras un campo.'
 )
 
 
@@ -156,7 +151,7 @@ class InstagramService:
 
         profile_url = f"https://www.instagram.com/{username}/"
         context_parts = [p for p in (hotel_name, city) if p]
-        context = f", which belongs to {', '.join(context_parts)}" if context_parts else ""
+        context = f"que pertenece a {', '.join(context_parts)}" if context_parts else ""
         prompt = _USER_PROMPT_TEMPLATE.format(username=username, context=context)
 
         try:
