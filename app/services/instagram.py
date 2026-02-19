@@ -27,20 +27,20 @@ _WA_API_RE = re.compile(r"api\.whatsapp\.com/send\?phone=(\d+)")
 _JSON_RE = re.compile(r"\{[^{}]*\}")
 
 _SYSTEM_PROMPT = (
-    "You are a hotel data extraction assistant. "
+    "You are a hotel research assistant. "
     "Return ONLY valid JSON, no markdown fences, no explanation."
 )
 
 _USER_PROMPT_TEMPLATE = (
-    'Busco los datos de contacto del perfil de Instagram @{username} '
+    'Search the web for information about the Instagram account @{username} '
     '{context}. '
-    'Necesito: nombre del perfil, texto de la biografia, '
-    'telefonos, email, enlace de WhatsApp, numero de seguidores. '
-    'Responde SOLO con un JSON con estos campos: '
+    'Find: the profile display name, the bio text, '
+    'phone numbers, email address, WhatsApp link, and follower count. '
+    'Return ONLY a JSON object with these fields: '
     '"full_name", "biography", "external_url", "business_email", '
     '"business_phone", "follower_count", '
-    '"whatsapp_url" (enlace wa.me/wa.link si existe). '
-    'Usa null si no encuentras un campo.'
+    '"whatsapp_url" (wa.me or wa.link URL if found). '
+    'Use null for any field you cannot find.'
 )
 
 
