@@ -446,17 +446,16 @@ class EnrichmentService:
         if booking_data and booking_data.url:
             updates["booking_url"] = booking_data.url
 
-        # Room count from Tavily (only fills empty fields)
+        # Room count from Tavily — always force-write rooms + market_fit
         auto_market_fit: str | None = None
-        if rooms_str and not (props.cantidad_de_habitaciones and props.cantidad_de_habitaciones.strip()):
+        if rooms_str:
             updates["cantidad_de_habitaciones"] = rooms_str
             updates["habitaciones"] = rooms_str
-            if not (props.market_fit and props.market_fit.strip()):
-                try:
-                    auto_market_fit = compute_market_fit(int(rooms_str))
-                    updates["market_fit"] = auto_market_fit
-                except (ValueError, TypeError):
-                    pass
+            try:
+                auto_market_fit = compute_market_fit(int(rooms_str))
+                updates["market_fit"] = auto_market_fit
+            except (ValueError, TypeError):
+                pass
 
         # Always clear agente
         updates["agente"] = ""

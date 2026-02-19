@@ -1163,8 +1163,8 @@ async def test_tavily_rooms_auto_sets_cantidad_and_market_fit(tavily_enrichment_
 
 
 @pytest.mark.asyncio
-async def test_tavily_rooms_skips_if_already_set():
-    """Tavily rooms NOT written if company already has cantidad_de_habitaciones."""
+async def test_tavily_rooms_overwrites_existing():
+    """Tavily rooms always force-write cantidad_de_habitaciones + market_fit."""
     hs = AsyncMock(spec=HubSpotService)
     hs.create_note.return_value = None
     hs.create_contact.return_value = "new-contact-id"
@@ -1188,8 +1188,9 @@ async def test_tavily_rooms_skips_if_already_set():
     await svc._process_company(company)
 
     main_update = hs.update_company.await_args_list[-1].args[1]
-    assert "cantidad_de_habitaciones" not in main_update
-    assert "market_fit" not in main_update
+    assert main_update["cantidad_de_habitaciones"] == "22"
+    assert main_update["habitaciones"] == "22"
+    assert main_update["market_fit"] == "Conejo"  # 22 rooms overrides old Elefante
 
 
 @pytest.mark.asyncio
