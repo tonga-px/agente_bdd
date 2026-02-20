@@ -277,6 +277,15 @@ class EnrichmentService:
                     logger.exception("Failed to create error note for company %s", company.id)
                 errors += 1
 
+            except BaseException:
+                # CancelledError (deploy/shutdown) — clear agente so company isn't stuck
+                logger.warning("Cancelled while processing company %s, clearing agente", company.id)
+                try:
+                    await self._hubspot.update_company(company.id, {"agente": ""})
+                except Exception:
+                    logger.exception("Failed to clear agente for company %s", company.id)
+                raise
+
             await asyncio.sleep(HUBSPOT_DELAY)
 
         return EnrichmentResponse(

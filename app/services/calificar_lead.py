@@ -174,6 +174,14 @@ class CalificarLeadService:
                 status="error",
                 message=error_msg,
             )
+        except BaseException:
+            # CancelledError (deploy/shutdown) — clear agente so company isn't stuck
+            logger.warning("Cancelled while processing company %s, clearing agente", company.id)
+            try:
+                await self._hubspot.update_company(company.id, {"agente": ""})
+            except Exception:
+                logger.exception("Failed to clear agente for company %s", company.id)
+            raise
 
     async def _process_company(
         self, company: HubSpotCompany
