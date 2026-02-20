@@ -380,7 +380,7 @@ class EnrichmentService:
         booking_data: BookingData | None = (
             gather_results[1] if not isinstance(gather_results[1], BaseException) else None
         )
-        if booking_data and not booking_data.rating and not booking_data.review_count:
+        if booking_data and not booking_data.url and not booking_data.rating and not booking_data.review_count:
             booking_data = None
         rooms_str: str | None = (
             gather_results[2] if not isinstance(gather_results[2], BaseException) else None
