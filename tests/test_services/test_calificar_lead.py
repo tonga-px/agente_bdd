@@ -623,6 +623,56 @@ async def test_tipo_de_empresa_in_response():
             "cantidad_de_habitaciones": "20",
             "market_fit": "Conejo",
             "razonamiento": "Hotel boutique.",
+            "tipo_de_empresa": "Hotel",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+
+        result = await service.run(company_id="C1")
+
+    assert result.tipo_de_empresa == "Hotel"
+
+
+@respx.mock
+async def test_invalid_tipo_de_empresa_defaults_to_otro():
+    """Unknown tipo_de_empresa from Claude defaults to 'Otro'."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "20",
+            "market_fit": "Conejo",
+            "razonamiento": "Es un hotel.",
+            "tipo_de_empresa": "Castillo medieval",  # not in valid set or map
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+
+        result = await service.run(company_id="C1")
+
+    assert result.tipo_de_empresa == "Otro"
+
+
+@respx.mock
+async def test_tipo_de_empresa_mapped_from_close_match():
+    """Close tipo_de_empresa from Claude is mapped to valid HubSpot value."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "20",
+            "market_fit": "Conejo",
+            "razonamiento": "Hotel boutique.",
             "tipo_de_empresa": "Boutique hotel",
         })
         service = CalificarLeadService(hubspot, claude)
@@ -634,32 +684,7 @@ async def test_tipo_de_empresa_in_response():
 
         result = await service.run(company_id="C1")
 
-    assert result.tipo_de_empresa == "Boutique hotel"
-
-
-@respx.mock
-async def test_invalid_tipo_de_empresa_ignored():
-    """Invalid tipo_de_empresa from Claude is set to None."""
-    import httpx
-    async with httpx.AsyncClient() as client:
-        hubspot = HubSpotService(client, "test-token")
-        claude = ClaudeService(api_key="test-key")
-        claude.analyze = AsyncMock(return_value={
-            "cantidad_de_habitaciones": "20",
-            "market_fit": "Conejo",
-            "razonamiento": "Es un hotel.",
-            "tipo_de_empresa": "Posada",  # not in valid set
-        })
-        service = CalificarLeadService(hubspot, claude)
-
-        _mock_company_get()
-        _mock_empty_associations()
-        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
-        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
-
-        result = await service.run(company_id="C1")
-
-    assert result.tipo_de_empresa is None
+    assert result.tipo_de_empresa == "Hotel"  # "Boutique hotel" maps to "Hotel"
 
 
 @respx.mock

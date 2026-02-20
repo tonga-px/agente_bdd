@@ -18,9 +18,36 @@ VALID_MARKET_FITS = {"No es FIT", "Hormiga", "Conejo", "Elefante"}
 NO_FIT_STAGE_ID = "1178022266"
 
 VALID_TIPO_EMPRESA = {
-    "Hotel", "Apart hotel", "Hostel", "Resort", "Boutique hotel",
-    "Motel", "Bed and breakfasts", "Campamento / Glamping",
-    "Cadena hotelera", "Agencia de viaje", "Otro",
+    "Apartamentos y Casas", "Bed and breakfasts", "Cabaña", "Cadena",
+    "Camping", "Hostel", "Hotel", "Posadas y Lodges", "Proveedor", "Otro", "VR",
+}
+
+# Map close Claude responses to valid HubSpot values
+_TIPO_EMPRESA_MAP = {
+    "apart hotel": "Apartamentos y Casas",
+    "aparthotel": "Apartamentos y Casas",
+    "apartamento": "Apartamentos y Casas",
+    "apartamentos": "Apartamentos y Casas",
+    "resort": "Hotel",
+    "boutique hotel": "Hotel",
+    "boutique": "Hotel",
+    "motel": "Hotel",
+    "b&b": "Bed and breakfasts",
+    "bed & breakfast": "Bed and breakfasts",
+    "bed and breakfast": "Bed and breakfasts",
+    "posada": "Posadas y Lodges",
+    "lodge": "Posadas y Lodges",
+    "cadena hotelera": "Cadena",
+    "glamping": "Camping",
+    "campamento": "Camping",
+    "campamento / glamping": "Camping",
+    "agencia de viaje": "Proveedor",
+    "agencia": "Proveedor",
+    "cabaña": "Cabaña",
+    "cabañas": "Cabaña",
+    "cabana": "Cabaña",
+    "vacation rental": "VR",
+    "alquiler temporal": "VR",
 }
 
 _SYSTEM_PROMPT = (
@@ -34,9 +61,8 @@ _SYSTEM_PROMPT = (
     '"Elefante" (28+ habitaciones)\n'
     "3. razonamiento: breve explicación en español de por qué llegaste a esa conclusión\n"
     "4. tipo_de_empresa: una de estas opciones exactas: "
-    '"Hotel", "Apart hotel", "Hostel", "Resort", "Boutique hotel", '
-    '"Motel", "Bed and breakfasts", "Campamento / Glamping", '
-    '"Cadena hotelera", "Agencia de viaje", "Otro"\n'
+    '"Hotel", "Hostel", "Bed and breakfasts", "Apartamentos y Casas", '
+    '"Cabaña", "Cadena", "Camping", "Posadas y Lodges", "Proveedor", "VR", "Otro"\n'
     "5. resumen_interacciones: resumen en bullets (uno por línea con guión) "
     "del historial de interacciones con el hotel (llamadas, emails, WhatsApp, notas relevantes). "
     "Si no hay interacciones significativas, devuelve null.\n\n"
@@ -222,8 +248,13 @@ class CalificarLeadService:
         # Extract new fields
         tipo_de_empresa = analysis.get("tipo_de_empresa")
         if tipo_de_empresa and tipo_de_empresa not in VALID_TIPO_EMPRESA:
-            logger.warning("Invalid tipo_de_empresa from Claude: %s", tipo_de_empresa)
-            tipo_de_empresa = None
+            mapped = _TIPO_EMPRESA_MAP.get(tipo_de_empresa.lower())
+            if mapped:
+                logger.info("Mapped tipo_de_empresa '%s' → '%s'", tipo_de_empresa, mapped)
+                tipo_de_empresa = mapped
+            else:
+                logger.warning("Invalid tipo_de_empresa from Claude: %s, defaulting to Otro", tipo_de_empresa)
+                tipo_de_empresa = "Otro"
 
         resumen_interacciones = analysis.get("resumen_interacciones")
         if resumen_interacciones:

@@ -593,10 +593,10 @@ def test_calificar_lead_note_tipo_de_empresa():
     """tipo_de_empresa appears in the note."""
     result = build_calificar_lead_note(
         "Hotel Sol", "Conejo", "20", "Es un hotel mediano.",
-        tipo_de_empresa="Boutique hotel",
+        tipo_de_empresa="Hotel",
     )
     assert "Tipo de Empresa" in result
-    assert "Boutique hotel" in result
+    assert "Hotel" in result
 
 
 def test_calificar_lead_note_lifecyclestage():
