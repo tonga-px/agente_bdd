@@ -30,7 +30,7 @@ _ROOM_RE = re.compile(r"(\d+)\s*(?:habitacion|room|cuarto|suite|chambre|quarto)"
 _ROOM_TYPE_RE = re.compile(
     r"((?:Habitaci[oó]n|Suite|Estudio|Studio|Caba[nñ]a|Bungalow"
     r"|Loft|Penthouse|Apartamento|Apartment|Departamento|Dormitorio)"
-    r"[^\n.,;:!?(){}0-9]{0,50})",
+    r"[^\n.,;:!?()\[\]{}0-9|]{0,50})",
     re.IGNORECASE,
 )
 
