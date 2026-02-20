@@ -89,6 +89,9 @@ class CalificarLeadResponse(BaseModel):
     market_fit: str | None = None
     rooms: str | None = None
     reasoning: str | None = None
+    tipo_de_empresa: str | None = None
+    resumen_interacciones: str | None = None
+    lifecyclestage: str | None = None
     lead_actions: list[LeadAction] = []
     note: str | None = None
 

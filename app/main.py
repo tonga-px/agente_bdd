@@ -103,7 +103,9 @@ async def lifespan(app: FastAPI):
         # Claude + CalificarLead (conditional)
         if settings.anthropic_api_key:
             claude = ClaudeService(settings.anthropic_api_key)
-            app.state.calificar_lead_service = CalificarLeadService(hubspot, claude)
+            app.state.calificar_lead_service = CalificarLeadService(
+                hubspot, claude, tavily=tavily
+            )
         else:
             app.state.calificar_lead_service = None
 

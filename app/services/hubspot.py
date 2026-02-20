@@ -19,6 +19,7 @@ TASKS_URL = "https://api.hubapi.com/crm/v3/objects/tasks"
 CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts"
 EMAILS_URL = "https://api.hubapi.com/crm/v3/objects/emails"
 LEADS_URL = "https://api.hubapi.com/crm/v3/objects/leads"
+COMMUNICATIONS_URL = "https://api.hubapi.com/crm/v3/objects/communications"
 TASKS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/tasks/search"
 TASK_ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/tasks"
 ASSOCIATIONS_URL = "https://api.hubapi.com/crm/v4/objects/companies"
@@ -45,6 +46,9 @@ SEARCH_PROPERTIES = [
     "plaza",
     "cantidad_de_habitaciones",
     "habitaciones",
+    "booking_url",
+    "tipo_de_empresa",
+    "lifecyclestage",
 ]
 
 
@@ -243,6 +247,27 @@ class HubSpotService:
             emails.append(HubSpotEmail(**resp.json()))
         logger.info("Fetched %d emails for company %s", len(emails), company_id)
         return emails
+
+    async def get_associated_communications(
+        self, company_id: str, limit: int = 20
+    ) -> list[dict]:
+        ids = await self._get_associated_ids(company_id, "communications")
+        comms: list[dict] = []
+        for obj_id in ids[:limit]:
+            url = f"{COMMUNICATIONS_URL}/{obj_id}"
+            resp = await self._client.get(
+                url,
+                params={
+                    "properties": "hs_communication_channel_type,hs_communication_body,hs_body_preview,hs_timestamp"
+                },
+                headers=self._headers,
+            )
+            if resp.status_code >= 400:
+                logger.warning("Failed to fetch communication %s: %s", obj_id, resp.status_code)
+                continue
+            comms.append(resp.json())
+        logger.info("Fetched %d communications for company %s", len(comms), company_id)
+        return comms
 
     async def create_contact(
         self, company_id: str, properties: dict[str, str]

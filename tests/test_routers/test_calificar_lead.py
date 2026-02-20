@@ -12,6 +12,7 @@ HUBSPOT_ASSOC_CONTACTS = "https://api.hubapi.com/crm/v4/objects/companies/C1/ass
 HUBSPOT_ASSOC_NOTES = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/notes"
 HUBSPOT_ASSOC_EMAILS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/emails"
 HUBSPOT_ASSOC_CALLS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/calls"
+HUBSPOT_ASSOC_COMMS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/communications"
 
 
 def _mock_company():
@@ -23,6 +24,7 @@ def _mock_company():
                 "city": "Santiago",
                 "country": "Chile",
                 "agente": "calificar_lead",
+                "booking_url": "https://www.booking.com/hotel/cl/test.html",
             },
         })
     )
@@ -33,6 +35,7 @@ def _mock_empty_associations():
     respx.get(HUBSPOT_ASSOC_NOTES).mock(return_value=Response(200, json={"results": []}))
     respx.get(HUBSPOT_ASSOC_EMAILS).mock(return_value=Response(200, json={"results": []}))
     respx.get(HUBSPOT_ASSOC_CALLS).mock(return_value=Response(200, json={"results": []}))
+    respx.get(HUBSPOT_ASSOC_COMMS).mock(return_value=Response(200, json={"results": []}))
 
 
 async def submit_and_wait(client: AsyncClient, json=None, timeout: float = 5.0):
@@ -71,6 +74,8 @@ async def test_calificar_lead_full_flow(client):
             "cantidad_de_habitaciones": "20",
             "market_fit": "Conejo",
             "razonamiento": "20 habitaciones según notas.",
+            "tipo_de_empresa": "Hotel",
+            "resumen_interacciones": "- Llamada inicial realizada",
         },
     ):
         job = await submit_and_wait(client, json={"company_id": "C1"})
@@ -81,6 +86,9 @@ async def test_calificar_lead_full_flow(client):
     assert result["status"] == "completed"
     assert result["market_fit"] == "Conejo"
     assert result["rooms"] == "20"
+    assert result["tipo_de_empresa"] == "Hotel"
+    assert result["resumen_interacciones"] == "- Llamada inicial realizada"
+    assert result["lifecyclestage"] == "lead"
 
 
 @respx.mock

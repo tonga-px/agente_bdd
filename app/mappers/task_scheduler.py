@@ -125,31 +125,41 @@ MIN_FUTURE_MINUTES = 10
 def compute_task_due_date(country: str | None, now: datetime | None = None) -> str:
     """Compute the due date for a follow-up task. Returns ISO 8601 UTC string.
 
-    Returns today with a random business-hour time if today is already a
-    business day; otherwise advances to the next one.  The result is
-    guaranteed to be at least MIN_FUTURE_MINUTES ahead of *now*.  If that
-    would push past 17:00 local, the task moves to the next business day.
+    If today is a business day (Mon-Fri, not a holiday) and at least
+    MIN_FUTURE_MINUTES remain before 17:00 local, the task is due today
+    (now + MIN_FUTURE_MINUTES).  Otherwise it is due at 09:00 on the
+    next business day.
     """
     tz = get_timezone(country)
     if now is None:
         now = datetime.now(timezone.utc)
 
     local_now = now.astimezone(tz)
-    day = next_business_day(local_now.date(), tz, country, include_reference=True)
-    utc_dt = random_business_time(day, tz)
+    today = local_now.date()
 
-    min_dt = now + timedelta(minutes=MIN_FUTURE_MINUTES)
-
-    if utc_dt < min_dt and day == local_now.date():
-        # Random time fell in the past (or too close) — push to now + 10 min
-        local_min = min_dt.astimezone(tz)
-        if local_min.hour < 17:
-            utc_dt = min_dt
+    # Check if today is a business day with enough time remaining
+    today_viable = False
+    if today.weekday() < 5:
+        iso_code = (
+            COUNTRY_HOLIDAYS.get(country.strip().lower()) if country else None
+        )
+        if iso_code:
+            year_holidays = holidays.country_holidays(
+                iso_code, years=today.year,
+            )
+            today_viable = today not in year_holidays
         else:
-            # Past 17:00 local → move to next business day
-            day = next_business_day(local_now.date(), tz, country)
-            utc_dt = random_business_time(day, tz)
+            today_viable = True
 
+    if today_viable:
+        end_of_day = datetime.combine(today, time(17, 0), tzinfo=tz)
+        min_due = local_now + timedelta(minutes=MIN_FUTURE_MINUTES)
+        if min_due < end_of_day:
+            return min_due.astimezone(timezone.utc).isoformat()
+
+    # Next business day at 09:00 local
+    day = next_business_day(today, tz, country)
+    utc_dt = datetime.combine(day, time(9, 0), tzinfo=tz).astimezone(timezone.utc)
     return utc_dt.isoformat()
 
 

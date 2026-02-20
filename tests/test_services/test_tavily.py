@@ -587,3 +587,248 @@ async def test_search_instagram_url_api_error(service, tavily_client_mock):
     result = await service.search_instagram_url("https://hotel.com")
 
     assert result is None
+
+
+# --- search_hoteles_data tests ---
+
+
+@pytest.mark.asyncio
+async def test_search_hoteles_data_success(service, tavily_client_mock):
+    """Hoteles.com search returns combined answer + content."""
+    tavily_client_mock.search.return_value = {
+        "answer": "Hotel Sol is a 4-star hotel with 25 rooms.",
+        "results": [
+            {"content": "Hotel Sol - Reviews and prices on hoteles.com"},
+        ],
+    }
+
+    result = await service.search_hoteles_data("Hotel Sol", "Lima", "Peru")
+
+    assert result is not None
+    assert "Hotel Sol" in result
+    assert "25 rooms" in result
+    tavily_client_mock.search.assert_awaited_once()
+    call_kwargs = tavily_client_mock.search.call_args
+    assert call_kwargs.kwargs.get("include_domains") == ["hoteles.com"]
+
+
+@pytest.mark.asyncio
+async def test_search_hoteles_data_no_results(service, tavily_client_mock):
+    """No results → None."""
+    tavily_client_mock.search.return_value = {
+        "answer": "",
+        "results": [],
+    }
+
+    result = await service.search_hoteles_data("Hotel Fake")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_search_hoteles_data_api_error(service, tavily_client_mock):
+    """API error → None (graceful degradation)."""
+    tavily_client_mock.search.side_effect = Exception("API down")
+
+    result = await service.search_hoteles_data("Hotel Sol")
+
+    assert result is None
+
+
+# --- scrape_booking_page tests ---
+
+
+@pytest.mark.asyncio
+async def test_scrape_booking_page_success(service, tavily_client_mock):
+    """Extract Booking page and parse rooms, rate, reviews."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{
+            "raw_content": (
+                "Hotel Sol - 45 habitaciones disponibles. "
+                "Precio desde US$85 por noche. "
+                "Basado en 1,234 reviews de huéspedes."
+            ),
+        }],
+    }
+
+    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/sol.html")
+
+    assert result is not None
+    assert result.source == "Booking.com"
+    assert result.rooms == 45
+    assert result.nightly_rate_usd == "US$85"
+    assert result.review_count == 1234
+    assert result.url == "https://www.booking.com/hotel/pe/sol.html"
+
+
+@pytest.mark.asyncio
+async def test_scrape_booking_page_partial_data(service, tavily_client_mock):
+    """Only some fields extracted from Booking page."""
+    tavily_client_mock.extract.return_value = {
+        "results": [{
+            "raw_content": "Hotel with 22 rooms in the city center.",
+        }],
+    }
+
+    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
+
+    assert result is not None
+    assert result.rooms == 22
+    assert result.nightly_rate_usd is None
+    assert result.review_count is None
+
+
+@pytest.mark.asyncio
+async def test_scrape_booking_page_no_content(service, tavily_client_mock):
+    """No content from extract → None."""
+    tavily_client_mock.extract.return_value = {"results": []}
+
+    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_scrape_booking_page_api_error(service, tavily_client_mock):
+    """API error → None (graceful degradation)."""
+    tavily_client_mock.extract.side_effect = Exception("API down")
+
+    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
+
+    assert result is None
+
+
+# --- scrape_hoteles_page tests ---
+
+
+@pytest.mark.asyncio
+async def test_scrape_hoteles_page_success(service, tavily_client_mock):
+    """Search + extract hoteles.com page."""
+    call_count = 0
+
+    async def _mock_search(**kwargs):
+        return {
+            "results": [{
+                "url": "https://www.hoteles.com/ho123/hotel-sol/",
+                "content": "Hotel Sol en Lima",
+            }],
+        }
+
+    async def _mock_extract(urls, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {
+            "results": [{
+                "raw_content": (
+                    "Hotel Sol - 30 rooms. "
+                    "From US$65 per night. "
+                    "Based on 567 opiniones."
+                ),
+            }],
+        }
+
+    tavily_client_mock.search.side_effect = _mock_search
+    tavily_client_mock.extract.side_effect = _mock_extract
+
+    result = await service.scrape_hoteles_page("Hotel Sol", "Lima", "Peru")
+
+    assert result is not None
+    assert result.source == "Hoteles.com"
+    assert result.rooms == 30
+    assert result.nightly_rate_usd == "US$65"
+    assert result.review_count == 567
+    assert "hoteles.com" in result.url
+
+
+@pytest.mark.asyncio
+async def test_scrape_hoteles_page_no_results(service, tavily_client_mock):
+    """No search results → None."""
+    tavily_client_mock.search.return_value = {"results": []}
+
+    result = await service.scrape_hoteles_page("Hotel Fake")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_scrape_hoteles_page_fallback_to_content(service, tavily_client_mock):
+    """Extract fails → falls back to search result content."""
+    async def _mock_search(**kwargs):
+        return {
+            "results": [{
+                "url": "https://www.hoteles.com/ho123/hotel-sol/",
+                "content": "Hotel Sol has 18 habitaciones, from US$50 per night, 200 reviews.",
+            }],
+        }
+
+    async def _mock_extract(urls, **kwargs):
+        return {"results": []}  # No content extracted
+
+    tavily_client_mock.search.side_effect = _mock_search
+    tavily_client_mock.extract.side_effect = _mock_extract
+
+    result = await service.scrape_hoteles_page("Hotel Sol", "Lima")
+
+    assert result is not None
+    assert result.rooms == 18
+    assert result.nightly_rate_usd == "US$50"
+
+
+@pytest.mark.asyncio
+async def test_scrape_hoteles_page_api_error(service, tavily_client_mock):
+    """API error → None (graceful degradation)."""
+    tavily_client_mock.search.side_effect = Exception("API down")
+
+    result = await service.scrape_hoteles_page("Hotel Sol")
+
+    assert result is None
+
+
+# --- _parse_listing_data unit tests ---
+
+
+def test_parse_listing_rooms():
+    """Parse room count from text."""
+    from app.services.tavily import TavilyService
+    result = TavilyService._parse_listing_data(
+        "This hotel has 42 habitaciones.", "Test", None,
+    )
+    assert result.rooms == 42
+
+
+def test_parse_listing_rate_usd_prefix():
+    """Parse rate with US$ prefix."""
+    from app.services.tavily import TavilyService
+    result = TavilyService._parse_listing_data(
+        "Price from US$120 per night.", "Test", None,
+    )
+    assert result.nightly_rate_usd == "US$120"
+
+
+def test_parse_listing_rate_dollar_per_night():
+    """Parse rate with $ per night pattern."""
+    from app.services.tavily import TavilyService
+    result = TavilyService._parse_listing_data(
+        "Tarifa: $85 por noche.", "Test", None,
+    )
+    assert result.nightly_rate_usd == "US$85"
+
+
+def test_parse_listing_reviews():
+    """Parse review count from text."""
+    from app.services.tavily import TavilyService
+    result = TavilyService._parse_listing_data(
+        "Based on 2,345 reviews from guests.", "Test", None,
+    )
+    assert result.review_count == 2345
+
+
+def test_parse_listing_no_data():
+    """No structured data → all fields None."""
+    from app.services.tavily import TavilyService
+    result = TavilyService._parse_listing_data(
+        "A beautiful hotel in the heart of the city.", "Test", None,
+    )
+    assert result.rooms is None
+    assert result.nightly_rate_usd is None
+    assert result.review_count is None

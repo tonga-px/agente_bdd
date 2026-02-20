@@ -31,6 +31,7 @@ HUBSPOT_ASSOC_CONTACTS = "https://api.hubapi.com/crm/v4/objects/companies/C1/ass
 HUBSPOT_ASSOC_NOTES = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/notes"
 HUBSPOT_ASSOC_EMAILS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/emails"
 HUBSPOT_ASSOC_CALLS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/calls"
+HUBSPOT_ASSOC_COMMS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/communications"
 HUBSPOT_ASSOC_LEADS = "https://api.hubapi.com/crm/v4/objects/companies/C1/associations/leads"
 
 
@@ -41,6 +42,8 @@ def _make_company(
     country="Chile",
     market_fit=None,
     cantidad_de_habitaciones=None,
+    booking_url="https://www.booking.com/hotel/cl/test.html",
+    tipo_de_empresa=None,
 ):
     return HubSpotCompany(
         id=company_id,
@@ -51,6 +54,8 @@ def _make_company(
             agente="calificar_lead",
             market_fit=market_fit,
             cantidad_de_habitaciones=cantidad_de_habitaciones,
+            booking_url=booking_url,
+            tipo_de_empresa=tipo_de_empresa,
         ),
     )
 
@@ -60,9 +65,10 @@ def _mock_empty_associations():
     respx.get(HUBSPOT_ASSOC_NOTES).mock(return_value=Response(200, json={"results": []}))
     respx.get(HUBSPOT_ASSOC_EMAILS).mock(return_value=Response(200, json={"results": []}))
     respx.get(HUBSPOT_ASSOC_CALLS).mock(return_value=Response(200, json={"results": []}))
+    respx.get(HUBSPOT_ASSOC_COMMS).mock(return_value=Response(200, json={"results": []}))
 
 
-def _mock_company_get():
+def _mock_company_get(booking_url="https://www.booking.com/hotel/cl/test.html"):
     respx.get(HUBSPOT_COMPANY_URL).mock(
         return_value=Response(200, json={
             "id": "C1",
@@ -71,6 +77,7 @@ def _mock_company_get():
                 "city": "Santiago",
                 "country": "Chile",
                 "agente": "calificar_lead",
+                "booking_url": booking_url,
             },
         })
     )
@@ -87,6 +94,8 @@ async def test_run_completed_conejo():
             "cantidad_de_habitaciones": "20",
             "market_fit": "Conejo",
             "razonamiento": "El hotel tiene 20 habitaciones según la nota.",
+            "tipo_de_empresa": "Hotel",
+            "resumen_interacciones": "- Llamada realizada el 2024-01-15",
         })
         service = CalificarLeadService(hubspot, claude)
 
@@ -101,6 +110,9 @@ async def test_run_completed_conejo():
     assert result.market_fit == "Conejo"
     assert result.rooms == "20"
     assert result.reasoning == "El hotel tiene 20 habitaciones según la nota."
+    assert result.tipo_de_empresa == "Hotel"
+    assert result.resumen_interacciones == "- Llamada realizada el 2024-01-15"
+    assert result.lifecyclestage == "lead"
     assert result.lead_actions == []
     assert result.note is not None
 
@@ -147,6 +159,7 @@ async def test_run_no_fit_updates_leads():
 
     assert result.status == "completed"
     assert result.market_fit == "No es FIT"
+    assert result.lifecyclestage == "subscriber"
     # Should have stage_updated + task_created actions
     assert len(result.lead_actions) == 2
     assert result.lead_actions[0].action == "stage_updated"
@@ -232,14 +245,14 @@ async def test_resolve_next_company_id_none():
 
 @respx.mock
 async def test_run_invalid_market_fit_recomputed():
-    """When Claude returns an invalid market_fit but valid rooms, recompute."""
+    """When Claude returns invalid market_fit, compute_market_fit_with_type is used."""
     import httpx
     async with httpx.AsyncClient() as client:
         hubspot = HubSpotService(client, "test-token")
         claude = ClaudeService(api_key="test-key")
         claude.analyze = AsyncMock(return_value={
             "cantidad_de_habitaciones": "30",
-            "market_fit": "Grande",  # invalid
+            "market_fit": "Grande",  # invalid — ignored by new logic
             "razonamiento": "Es un hotel grande.",
         })
         service = CalificarLeadService(hubspot, claude)
@@ -252,7 +265,7 @@ async def test_run_invalid_market_fit_recomputed():
         result = await service.run(company_id="C1")
 
     assert result.status == "completed"
-    assert result.market_fit == "Elefante"  # recomputed from 30 rooms
+    assert result.market_fit == "Elefante"  # computed from 30 rooms + has booking
     assert result.rooms == "30"
 
 
@@ -351,6 +364,7 @@ async def test_build_user_prompt_includes_context():
     assert "Has 15 rooms" in prompt
     assert "Called hotel" in prompt
     assert "Juan Perez" in prompt
+    assert "Booking URL:" in prompt
 
 
 @respx.mock
@@ -453,3 +467,254 @@ async def test_prompt_fixes_double_encoded_notes():
 
     assert "Información del hotel" in prompt
     assert "\u00c3" not in prompt
+
+
+# --- New tests for booking/tipo_de_empresa/lifecyclestage ---
+
+
+@respx.mock
+async def test_no_booking_forces_no_fit():
+    """Company without booking_url → always 'No es FIT' regardless of rooms."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "50",
+            "market_fit": "Elefante",
+            "razonamiento": "Hotel grande.",
+            "tipo_de_empresa": "Hotel",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        # Company without booking_url
+        _mock_company_get(booking_url=None)
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+        respx.get(HUBSPOT_ASSOC_LEADS).mock(
+            return_value=Response(200, json={"results": []})
+        )
+
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    assert result.market_fit == "No es FIT"
+    assert result.lifecyclestage == "subscriber"
+
+
+@respx.mock
+async def test_hostel_under_5_hormiga():
+    """Hostel with <5 rooms + booking → Hormiga (exception)."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "3",
+            "market_fit": "No es FIT",
+            "razonamiento": "Hostel pequeño.",
+            "tipo_de_empresa": "Hostel",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    assert result.market_fit == "Hormiga"
+    assert result.tipo_de_empresa == "Hostel"
+    assert result.lifecyclestage == "lead"
+
+
+@respx.mock
+async def test_hostel_no_booking_no_fit():
+    """Hostel without booking → No es FIT (booking rule wins over exception)."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "3",
+            "market_fit": "No es FIT",
+            "razonamiento": "Hostel sin booking.",
+            "tipo_de_empresa": "Hostel",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get(booking_url=None)
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+        respx.get(HUBSPOT_ASSOC_LEADS).mock(
+            return_value=Response(200, json={"results": []})
+        )
+
+        result = await service.run(company_id="C1")
+
+    assert result.status == "completed"
+    assert result.market_fit == "No es FIT"
+    assert result.lifecyclestage == "subscriber"
+
+
+@respx.mock
+async def test_lifecyclestage_subscriber():
+    """No es FIT → lifecyclestage = subscriber."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "2",
+            "market_fit": "No es FIT",
+            "razonamiento": "Pocas habitaciones.",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+        respx.get(HUBSPOT_ASSOC_LEADS).mock(
+            return_value=Response(200, json={"results": []})
+        )
+
+        result = await service.run(company_id="C1")
+
+    assert result.lifecyclestage == "subscriber"
+
+
+@respx.mock
+async def test_lifecyclestage_lead():
+    """Any non-'No es FIT' → lifecyclestage = lead."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "15",
+            "market_fit": "Conejo",
+            "razonamiento": "Hotel mediano.",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+
+        result = await service.run(company_id="C1")
+
+    assert result.lifecyclestage == "lead"
+
+
+@respx.mock
+async def test_tipo_de_empresa_in_response():
+    """tipo_de_empresa from Claude appears in response."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "20",
+            "market_fit": "Conejo",
+            "razonamiento": "Hotel boutique.",
+            "tipo_de_empresa": "Boutique hotel",
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+
+        result = await service.run(company_id="C1")
+
+    assert result.tipo_de_empresa == "Boutique hotel"
+
+
+@respx.mock
+async def test_invalid_tipo_de_empresa_ignored():
+    """Invalid tipo_de_empresa from Claude is set to None."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        claude.analyze = AsyncMock(return_value={
+            "cantidad_de_habitaciones": "20",
+            "market_fit": "Conejo",
+            "razonamiento": "Es un hotel.",
+            "tipo_de_empresa": "Posada",  # not in valid set
+        })
+        service = CalificarLeadService(hubspot, claude)
+
+        _mock_company_get()
+        _mock_empty_associations()
+        respx.patch(HUBSPOT_COMPANY_URL).mock(return_value=Response(200, json={}))
+        respx.post(HUBSPOT_NOTES_URL).mock(return_value=Response(200, json={"id": "note-1"}))
+
+        result = await service.run(company_id="C1")
+
+    assert result.tipo_de_empresa is None
+
+
+@respx.mock
+async def test_whatsapp_in_prompt():
+    """WhatsApp messages appear in the prompt."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        service = CalificarLeadService(hubspot, claude)
+
+        company = _make_company()
+        whatsapp_msgs = [
+            {
+                "properties": {
+                    "hs_communication_channel_type": "WHATS_APP",
+                    "hs_communication_body": "Hola, quisiera reservar",
+                    "hs_body_preview": None,
+                    "hs_timestamp": "2024-06-01T10:00:00Z",
+                },
+            },
+            {
+                "properties": {
+                    "hs_communication_channel_type": "WHATS_APP",
+                    "hs_communication_body": None,
+                    "hs_body_preview": None,
+                    "hs_timestamp": "2024-06-02T10:00:00Z",
+                },
+            },
+        ]
+
+        prompt = service._build_user_prompt(
+            company, [], [], [], [], whatsapp_msgs=whatsapp_msgs,
+        )
+
+    assert "## WhatsApp" in prompt
+    assert "Hola, quisiera reservar" in prompt
+    assert "(sin contenido)" in prompt
+
+
+@respx.mock
+async def test_hoteles_com_data_in_prompt():
+    """Hoteles.com data appears in the prompt."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        hubspot = HubSpotService(client, "test-token")
+        claude = ClaudeService(api_key="test-key")
+        service = CalificarLeadService(hubspot, claude)
+
+        company = _make_company()
+        hoteles_data = "Hotel Test - 4 estrellas, 25 habitaciones, piscina y spa"
+
+        prompt = service._build_user_prompt(
+            company, [], [], [], [], hoteles_data=hoteles_data,
+        )
+
+    assert "## Datos de Hoteles.com" in prompt
+    assert "25 habitaciones" in prompt

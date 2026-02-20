@@ -4,7 +4,7 @@ from html import escape
 from app.schemas.booking import BookingData
 from app.schemas.google_places import GooglePlace
 from app.schemas.instagram import InstagramData
-from app.schemas.tavily import ReputationData
+from app.schemas.tavily import ReputationData, ScrapedListingData
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
 
@@ -336,6 +336,34 @@ def _format_reputation_section(reputation: ReputationData) -> str | None:
     return f"<h3>Reputacion</h3><ul>{''.join(rows)}</ul>"
 
 
+def _format_scraped_listings_section(
+    listings: list[ScrapedListingData],
+) -> str | None:
+    rows: list[str] = []
+    for listing in listings:
+        items: list[str] = []
+        if listing.rooms is not None:
+            items.append(f"Habitaciones: {listing.rooms}")
+        if listing.nightly_rate_usd:
+            items.append(f"Tarifa aprox: {escape(listing.nightly_rate_usd)}/noche")
+        if listing.review_count is not None:
+            items.append(f"Reviews: {listing.review_count:,}")
+        if not items:
+            continue
+        source = escape(listing.source)
+        url = listing.url
+        if url:
+            url_safe = escape(url)
+            source_html = f'<a href="{url_safe}">{source}</a>'
+        else:
+            source_html = source
+        rows.append(f"<li><strong>{source_html}:</strong> {' | '.join(items)}</li>")
+
+    if not rows:
+        return None
+    return f"<h3>Datos de OTAs</h3><ul>{''.join(rows)}</ul>"
+
+
 def build_merge_note(
     company_name: str | None,
     merged_id: str,
@@ -397,6 +425,9 @@ def build_calificar_lead_note(
     rooms: str | None,
     reasoning: str | None,
     lead_actions: list | None = None,
+    tipo_de_empresa: str | None = None,
+    resumen_interacciones: str | None = None,
+    lifecyclestage: str | None = None,
 ) -> str:
     """Build an HTML note summarizing lead qualification results."""
     from app.schemas.responses import LeadAction
@@ -422,10 +453,22 @@ def build_calificar_lead_note(
         parts.append(f"<li><strong>Market Fit:</strong> {escape(market_fit)}</li>")
     if rooms:
         parts.append(f"<li><strong>Habitaciones:</strong> {escape(rooms)}</li>")
+    if tipo_de_empresa:
+        parts.append(f"<li><strong>Tipo de Empresa:</strong> {escape(tipo_de_empresa)}</li>")
+    if lifecyclestage:
+        parts.append(f"<li><strong>Lifecycle Stage:</strong> {escape(lifecyclestage)}</li>")
     if reasoning:
         parts.append(f"<li><strong>Razonamiento:</strong> {escape(reasoning)}</li>")
 
     parts.append("</ul>")
+
+    if resumen_interacciones:
+        parts.append("<h3>Historial de Interacciones</h3><ul>")
+        for line in resumen_interacciones.split("\n"):
+            line = line.strip().lstrip("- ")
+            if line:
+                parts.append(f"<li>{escape(line)}</li>")
+        parts.append("</ul>")
 
     if lead_actions:
         typed_actions: list[LeadAction] = lead_actions
@@ -449,6 +492,7 @@ def build_enrichment_note(
     rooms_str: str | None = None,
     auto_market_fit: str | None = None,
     reputation: ReputationData | None = None,
+    scraped_listings: list[ScrapedListingData] | None = None,
 ) -> str:
     """Build an HTML enrichment summary for a HubSpot note."""
     title = escape(company_name or "Empresa")
@@ -497,6 +541,11 @@ def build_enrichment_note(
         rep_section = _format_reputation_section(reputation)
         if rep_section:
             parts.append(rep_section)
+
+    if scraped_listings:
+        listings_section = _format_scraped_listings_section(scraped_listings)
+        if listings_section:
+            parts.append(listings_section)
 
     if not place and not ta_location:
         parts.append("<p>No se encontraron datos en ninguna fuente.</p>")

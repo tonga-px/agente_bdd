@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from app.mappers.note_builder import (
+    build_calificar_lead_note,
     build_conflict_note,
     build_enrichment_note,
     build_error_note,
@@ -9,7 +10,7 @@ from app.mappers.note_builder import (
 from app.schemas.booking import BookingData
 from app.schemas.google_places import DisplayName, GooglePlace
 from app.schemas.instagram import InstagramData
-from app.schemas.tavily import ReputationData
+from app.schemas.tavily import ReputationData, ScrapedListingData
 from app.schemas.tripadvisor import TripAdvisorLocation, TripAdvisorPhoto
 from app.schemas.website import WebScrapedData
 
@@ -583,3 +584,170 @@ def test_rooms_and_reputation_section_order():
     rooms_pos = result.index("Habitaciones (auto)")
     rep_pos = result.index("Reputacion")
     assert google_pos < rooms_pos < rep_pos
+
+
+# --- build_calificar_lead_note tests ---
+
+
+def test_calificar_lead_note_tipo_de_empresa():
+    """tipo_de_empresa appears in the note."""
+    result = build_calificar_lead_note(
+        "Hotel Sol", "Conejo", "20", "Es un hotel mediano.",
+        tipo_de_empresa="Boutique hotel",
+    )
+    assert "Tipo de Empresa" in result
+    assert "Boutique hotel" in result
+
+
+def test_calificar_lead_note_lifecyclestage():
+    """lifecyclestage appears in the note."""
+    result = build_calificar_lead_note(
+        "Hotel Sol", "No es FIT", "2", "Muy pequeño.",
+        lifecyclestage="subscriber",
+    )
+    assert "Lifecycle Stage" in result
+    assert "subscriber" in result
+
+
+def test_calificar_lead_note_resumen_interacciones():
+    """resumen_interacciones bullets appear in the note."""
+    resumen = "- Llamada el 2024-01-15\n- Email enviado el 2024-01-20"
+    result = build_calificar_lead_note(
+        "Hotel Sol", "Conejo", "20", "ok",
+        resumen_interacciones=resumen,
+    )
+    assert "Historial de Interacciones" in result
+    assert "Llamada el 2024-01-15" in result
+    assert "Email enviado el 2024-01-20" in result
+    # Should be wrapped in <li> tags
+    assert "<li>Llamada el 2024-01-15</li>" in result
+
+
+def test_calificar_lead_note_resumen_escapes_html():
+    """HTML in resumen_interacciones is escaped."""
+    resumen = "- <script>alert('xss')</script>"
+    result = build_calificar_lead_note(
+        "Hotel", "Conejo", "20", "ok",
+        resumen_interacciones=resumen,
+    )
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_calificar_lead_note_no_resumen():
+    """No resumen_interacciones → no Historial section."""
+    result = build_calificar_lead_note("Hotel", "Conejo", "20", "ok")
+    assert "Historial de Interacciones" not in result
+
+
+def test_calificar_lead_note_empty_resumen():
+    """Empty resumen_interacciones → no Historial section."""
+    result = build_calificar_lead_note("Hotel", "Conejo", "20", "ok", resumen_interacciones="")
+    assert "Historial de Interacciones" not in result
+
+
+# --- Scraped listings section tests ---
+
+
+def test_scraped_listings_in_note():
+    """Scraped listing data appears in enrichment note."""
+    listings = [
+        ScrapedListingData(
+            source="Booking.com",
+            url="https://www.booking.com/hotel/pe/sol.html",
+            rooms=45,
+            nightly_rate_usd="US$85",
+            review_count=1234,
+        ),
+    ]
+    result = build_enrichment_note("Test Hotel", None, None, scraped_listings=listings)
+    assert "Datos de OTAs" in result
+    assert "Booking.com" in result
+    assert "Habitaciones: 45" in result
+    assert "US$85" in result
+    assert "1,234" in result
+
+
+def test_scraped_listings_multiple_sources():
+    """Multiple scraped sources appear."""
+    listings = [
+        ScrapedListingData(
+            source="Booking.com",
+            url="https://booking.com/hotel/test",
+            rooms=30,
+            review_count=500,
+        ),
+        ScrapedListingData(
+            source="Hoteles.com",
+            url="https://hoteles.com/ho123/test/",
+            nightly_rate_usd="US$65",
+            review_count=200,
+        ),
+    ]
+    result = build_enrichment_note("Test", None, None, scraped_listings=listings)
+    assert "Booking.com" in result
+    assert "Hoteles.com" in result
+    assert "Habitaciones: 30" in result
+    assert "US$65" in result
+
+
+def test_scraped_listings_none():
+    """No scraped_listings → no OTAs section."""
+    result = build_enrichment_note("Test", None, None, scraped_listings=None)
+    assert "Datos de OTAs" not in result
+
+
+def test_scraped_listings_empty_list():
+    """Empty scraped_listings → no OTAs section."""
+    result = build_enrichment_note("Test", None, None, scraped_listings=[])
+    assert "Datos de OTAs" not in result
+
+
+def test_scraped_listings_no_data_items():
+    """Listing with all None fields → no OTAs section."""
+    listings = [ScrapedListingData(source="Booking.com")]
+    result = build_enrichment_note("Test", None, None, scraped_listings=listings)
+    assert "Datos de OTAs" not in result
+
+
+def test_scraped_listings_url_as_link():
+    """Source name should be a link when URL is provided."""
+    listings = [
+        ScrapedListingData(
+            source="Booking.com",
+            url="https://booking.com/test",
+            rooms=10,
+        ),
+    ]
+    result = build_enrichment_note("Test", None, None, scraped_listings=listings)
+    assert 'href="https://booking.com/test"' in result
+
+
+def test_scraped_listings_escapes_html():
+    """HTML in nightly_rate_usd is escaped."""
+    listings = [
+        ScrapedListingData(
+            source="Test",
+            nightly_rate_usd="<script>alert(1)</script>",
+        ),
+    ]
+    result = build_enrichment_note("Test", None, None, scraped_listings=listings)
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_scraped_listings_section_order():
+    """Scraped listings section appears after Reputation."""
+    place = GooglePlace(formattedAddress="Lima, Peru")
+    rep = ReputationData(google_rating=4.0)
+    listings = [
+        ScrapedListingData(source="Booking.com", rooms=20),
+    ]
+    result = build_enrichment_note(
+        "Test", place, None,
+        reputation=rep,
+        scraped_listings=listings,
+    )
+    rep_pos = result.index("Reputacion")
+    ota_pos = result.index("Datos de OTAs")
+    assert rep_pos < ota_pos

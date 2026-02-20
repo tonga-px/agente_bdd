@@ -20,7 +20,7 @@ from app.mappers.note_builder import (
 from app.schemas.booking import BookingData
 from app.schemas.instagram import InstagramData
 from app.schemas.responses import CompanyResult, EnrichmentResponse
-from app.schemas.tavily import ReputationData
+from app.schemas.tavily import ReputationData, ScrapedListingData
 from app.services.perplexity import PerplexityService
 from app.services.google_places import GooglePlacesService, build_search_query
 from app.services.hubspot import HubSpotService
@@ -421,6 +421,37 @@ class EnrichmentService:
                         company.id,
                     )
 
+        # --- Phase 2: Scrape listing pages (Booking.com + Hoteles.com) ---
+        scraped_listings: list[ScrapedListingData] = []
+        if self._tavily:
+            scrape_tasks: list = []
+            if booking_data and booking_data.url:
+                scrape_tasks.append(self._tavily.scrape_booking_page(booking_data.url))
+            if props.name:
+                scrape_tasks.append(
+                    self._tavily.scrape_hoteles_page(props.name, props.city, props.country)
+                )
+            if scrape_tasks:
+                scrape_results = await asyncio.gather(
+                    *scrape_tasks, return_exceptions=True,
+                )
+                for i, res in enumerate(scrape_results):
+                    if isinstance(res, BaseException):
+                        logger.warning("Listing scrape task %d failed: %s", i, res)
+                    elif res is not None:
+                        scraped_listings.append(res)
+
+            # Use scraped rooms as fallback if search_room_count returned nothing
+            if not rooms_str:
+                for listing in scraped_listings:
+                    if listing.rooms is not None:
+                        rooms_str = str(listing.rooms)
+                        logger.info(
+                            "Using room count %s from %s scrape",
+                            rooms_str, listing.source,
+                        )
+                        break
+
         # --- Merge results ---
         if place is None and ta_location is None:
             await self._hubspot.update_company(company.id, {"agente": ""})
@@ -532,6 +563,7 @@ class EnrichmentService:
             instagram_data=instagram_data,
             rooms_str=rooms_str, auto_market_fit=auto_market_fit,
             reputation=reputation,
+            scraped_listings=scraped_listings or None,
         )
         try:
             await self._hubspot.create_note(company.id, note_body)

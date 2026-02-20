@@ -18,7 +18,7 @@ from app.schemas.instagram import InstagramData
 from app.schemas.tripadvisor import TripAdvisorLocation
 from app.schemas.website import WebScrapedData
 from app.exceptions.custom import HubSpotError
-from app.schemas.tavily import ReputationData
+from app.schemas.tavily import ReputationData, ScrapedListingData
 from app.services.enrichment import (
     EnrichmentService,
     _dedup_contacts,
@@ -1107,6 +1107,8 @@ def tavily_enrichment_service():
         google_review_count=500,
         summary="Hotel muy bueno",
     )
+    tavily.scrape_booking_page.return_value = None
+    tavily.scrape_hoteles_page.return_value = None
 
     svc = EnrichmentService(
         hubspot=hs, google_places=gp, tavily=tavily, overwrite=False,
@@ -1178,6 +1180,8 @@ async def test_tavily_rooms_overwrites_existing():
     tavily.search_booking_data.return_value = BookingData()
     tavily.search_room_count.return_value = "22"
     tavily.search_reputation.return_value = None
+    tavily.scrape_booking_page.return_value = None
+    tavily.scrape_hoteles_page.return_value = None
 
     svc = EnrichmentService(hubspot=hs, google_places=gp, tavily=tavily)
 
@@ -1224,6 +1228,8 @@ async def test_tavily_graceful_degradation():
     tavily.search_booking_data.side_effect = Exception("Tavily down")
     tavily.search_room_count.side_effect = Exception("Tavily down")
     tavily.search_reputation.side_effect = Exception("Tavily down")
+    tavily.scrape_booking_page.side_effect = Exception("Tavily down")
+    tavily.scrape_hoteles_page.side_effect = Exception("Tavily down")
 
     svc = EnrichmentService(hubspot=hs, google_places=gp, tavily=tavily)
 
@@ -1307,6 +1313,8 @@ async def test_instagram_from_website_link():
     tavily.search_booking_data.return_value = BookingData()
     tavily.search_room_count.return_value = None
     tavily.search_reputation.return_value = None
+    tavily.scrape_booking_page.return_value = None
+    tavily.scrape_hoteles_page.return_value = None
 
     ig_mock = AsyncMock(spec=InstagramService)
     ig_mock.scrape.return_value = _ig_data(
@@ -1395,6 +1403,8 @@ async def test_instagram_from_tavily_search_fallback():
     tavily.search_booking_data.return_value = BookingData()
     tavily.search_room_count.return_value = None
     tavily.search_reputation.return_value = None
+    tavily.scrape_booking_page.return_value = None
+    tavily.scrape_hoteles_page.return_value = None
     tavily.search_instagram_url.return_value = "https://www.instagram.com/villamansah"
 
     ig_mock = AsyncMock(spec=InstagramService)
@@ -1417,3 +1427,117 @@ async def test_instagram_from_tavily_search_fallback():
         "https://www.instagram.com/villamansah",
         hotel_name="Villa Mansa", city="Mendoza",
     )
+
+
+# --- Listing scrape (Phase 2) integration tests ---
+
+
+@pytest.mark.asyncio
+async def test_scraped_listings_in_note(tavily_enrichment_service):
+    """Scraped listing data appears in the enrichment note."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    tavily.scrape_booking_page.return_value = ScrapedListingData(
+        source="Booking.com",
+        url="https://www.booking.com/hotel/ar/test.html",
+        rooms=45,
+        nightly_rate_usd="US$120",
+        review_count=1234,
+    )
+    tavily.scrape_hoteles_page.return_value = ScrapedListingData(
+        source="Hoteles.com",
+        url="https://www.hoteles.com/ho123",
+        nightly_rate_usd="US$95",
+        review_count=890,
+    )
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    assert "Datos de OTAs" in result.note
+    assert "US$120" in result.note
+    assert "US$95" in result.note
+    assert "1,234" in result.note  # formatted review count
+    assert "890" in result.note
+
+
+@pytest.mark.asyncio
+async def test_scraped_rooms_fallback(tavily_enrichment_service):
+    """When search_room_count returns nothing, scraped rooms are used."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    tavily.search_room_count.return_value = None  # no rooms from search
+    tavily.scrape_booking_page.return_value = ScrapedListingData(
+        source="Booking.com",
+        url="https://www.booking.com/hotel/ar/test.html",
+        rooms=30,
+    )
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    await svc._process_company(company)
+
+    main_update = hs.update_company.await_args_list[-1].args[1]
+    assert main_update.get("cantidad_de_habitaciones") == "30"
+    assert main_update.get("habitaciones") == "30"
+    assert main_update.get("market_fit") == "Elefante"  # 30 rooms
+
+
+@pytest.mark.asyncio
+async def test_scraped_rooms_not_used_when_search_has_rooms(tavily_enrichment_service):
+    """search_room_count takes priority over scraped rooms."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    tavily.search_room_count.return_value = "22"  # from search
+    tavily.scrape_booking_page.return_value = ScrapedListingData(
+        source="Booking.com", rooms=50,
+    )
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    await svc._process_company(company)
+
+    main_update = hs.update_company.await_args_list[-1].args[1]
+    assert main_update.get("cantidad_de_habitaciones") == "22"  # search wins
+
+
+@pytest.mark.asyncio
+async def test_scrape_errors_dont_block_enrichment(tavily_enrichment_service):
+    """Phase 2 scrape failures don't block enrichment."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    tavily.scrape_booking_page.side_effect = Exception("Extract API error")
+    tavily.scrape_hoteles_page.side_effect = Exception("Extract API error")
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    assert result.status == "enriched"
+    assert "Datos de OTAs" not in result.note  # no scrape data
+
+
+@pytest.mark.asyncio
+async def test_no_booking_url_skips_booking_scrape(tavily_enrichment_service):
+    """Without booking URL, only hoteles.com scrape runs."""
+    svc, hs, gp, tavily = tavily_enrichment_service
+
+    tavily.search_booking_data.return_value = BookingData()  # no url
+    tavily.scrape_hoteles_page.return_value = ScrapedListingData(
+        source="Hoteles.com", nightly_rate_usd="US$80", review_count=500,
+    )
+
+    company = _company(name="Hotel Sol", city="Lima", country="Peru")
+    gp.text_search.return_value = _google_place()
+
+    result = await svc._process_company(company)
+
+    tavily.scrape_booking_page.assert_not_awaited()
+    assert "Hoteles.com" in result.note
+    assert "US$80" in result.note

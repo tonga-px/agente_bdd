@@ -4,7 +4,7 @@ import re
 from tavily import AsyncTavilyClient
 
 from app.schemas.booking import BookingData
-from app.schemas.tavily import ReputationData
+from app.schemas.tavily import ReputationData, ScrapedListingData
 from app.schemas.website import WebScrapedData
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,19 @@ _BOOKING_RATING_RE = re.compile(r"booking.{0,80}?(\d[.,]\d)\s*/?\s*10", re.IGNOR
 _GOOGLE_REVIEWS_RE = re.compile(r"google.{0,120}?(\d[\d,. ]*\d)\s*(?:review|rese)", re.IGNORECASE)
 _TA_REVIEWS_RE = re.compile(r"tripadvisor.{0,120}?(\d[\d,. ]*\d)\s*(?:review|rese)", re.IGNORECASE)
 _BOOKING_REVIEWS_RE = re.compile(r"booking.{0,120}?(\d[\d,. ]*\d)\s*(?:review|rese)", re.IGNORECASE)
+
+# Listing page scraping patterns
+_LISTING_REVIEW_RE = re.compile(
+    r"(\d[\d,. ]*\d)\s*(?:review|rese[nñ]|opini[oó]n|comentario|calificaci)",
+    re.IGNORECASE,
+)
+_RATE_RE = re.compile(
+    r"(?:US\s*\$|USD\s*)\s*(\d[\d,.]*)"
+    r"|(\d[\d,.]*)\s*(?:US\s*\$|USD)"
+    r"|(?:desde|from|price|tarifa|noche|night).{0,40}?\$\s*(\d[\d,.]*)"
+    r"|\$\s*(\d[\d,.]*)\s*(?:por noche|per night|/night|noche)",
+    re.IGNORECASE,
+)
 
 
 def _normalize_phone(phone: str) -> str:
@@ -356,6 +369,163 @@ class TavilyService:
             return None
 
         logger.info("Tavily found reputation data for %s", hotel_name)
+        return data
+
+    async def search_hoteles_data(
+        self,
+        hotel_name: str,
+        city: str | None = None,
+        country: str | None = None,
+    ) -> str | None:
+        """Search hoteles.com for hotel data. Returns raw text or None."""
+        try:
+            return await self._do_search_hoteles(hotel_name, city, country)
+        except Exception:
+            logger.exception("Tavily hoteles.com search failed for %s", hotel_name)
+            return None
+
+    async def _do_search_hoteles(
+        self, hotel_name: str, city: str | None, country: str | None,
+    ) -> str | None:
+        location_parts = [p for p in (city, country) if p]
+        location = " ".join(location_parts)
+        query = f'"{hotel_name}" {location}'.strip()
+
+        result = await self._client.search(
+            query=query,
+            include_domains=["hoteles.com"],
+            max_results=3,
+            include_answer=True,
+        )
+
+        parts: list[str] = []
+        answer = result.get("answer", "")
+        if answer:
+            parts.append(answer)
+        for r in result.get("results", []):
+            content = r.get("content", "")
+            if content:
+                parts.append(content)
+
+        if not parts:
+            logger.info("Tavily found no hoteles.com data for %s", hotel_name)
+            return None
+
+        combined = "\n".join(parts)
+        logger.info("Tavily found %d chars from hoteles.com for %s", len(combined), hotel_name)
+        return combined
+
+    async def scrape_booking_page(self, url: str) -> ScrapedListingData | None:
+        """Extract a Booking.com page and parse rooms, rate, reviews."""
+        try:
+            text = await self._extract_page(url)
+            if not text:
+                return None
+            return self._parse_listing_data(text, "Booking.com", url)
+        except Exception:
+            logger.exception("Tavily Booking page scrape failed for %s", url)
+            return None
+
+    async def scrape_hoteles_page(
+        self,
+        hotel_name: str,
+        city: str | None = None,
+        country: str | None = None,
+    ) -> ScrapedListingData | None:
+        """Search hoteles.com for the hotel, then extract the page."""
+        try:
+            return await self._do_scrape_hoteles(hotel_name, city, country)
+        except Exception:
+            logger.exception("Tavily hoteles.com scrape failed for %s", hotel_name)
+            return None
+
+    async def _do_scrape_hoteles(
+        self, hotel_name: str, city: str | None, country: str | None,
+    ) -> ScrapedListingData | None:
+        location_parts = [p for p in (city, country) if p]
+        location = " ".join(location_parts)
+        query = f'"{hotel_name}" {location}'.strip()
+
+        result = await self._client.search(
+            query=query,
+            include_domains=["hoteles.com"],
+            max_results=3,
+        )
+
+        results = result.get("results", [])
+        if not results:
+            logger.info("Tavily found no hoteles.com page for %s", hotel_name)
+            return None
+
+        # Find a hoteles.com URL
+        url = None
+        for r in results:
+            u = r.get("url", "")
+            if "hoteles.com" in u.lower():
+                url = u
+                break
+
+        if not url:
+            logger.info("Tavily found no hoteles.com URL for %s", hotel_name)
+            return None
+
+        text = await self._extract_page(url)
+        if not text:
+            # Fallback: use search result content
+            all_content = " ".join(r.get("content", "") for r in results)
+            if all_content.strip():
+                return self._parse_listing_data(all_content, "Hoteles.com", url)
+            return None
+
+        return self._parse_listing_data(text, "Hoteles.com", url)
+
+    async def _extract_page(self, url: str) -> str | None:
+        """Generic Tavily Extract on a URL. Returns raw text or None."""
+        result = await self._client.extract(urls=[url])
+        content = self._get_extract_content(result)
+        if content and "base64," not in content[:500]:
+            logger.info("Tavily extracted %d chars from %s", len(content), url)
+            return content
+        logger.info("Tavily extract returned no usable content for %s", url)
+        return None
+
+    @staticmethod
+    def _parse_listing_data(
+        text: str, source: str, url: str | None,
+    ) -> ScrapedListingData:
+        """Parse rooms, nightly rate, review count from raw listing page text."""
+        data = ScrapedListingData(source=source, url=url)
+
+        # Rooms
+        m = _ROOM_RE.search(text)
+        if m:
+            try:
+                data.rooms = int(m.group(1))
+            except (ValueError, TypeError):
+                pass
+
+        # Nightly rate (USD)
+        m = _RATE_RE.search(text)
+        if m:
+            # Pick the first non-None group
+            raw = next((g for g in m.groups() if g), None)
+            if raw:
+                data.nightly_rate_usd = f"US${raw.strip()}"
+
+        # Review count
+        m = _LISTING_REVIEW_RE.search(text)
+        if m:
+            data.review_count = _parse_int(m.group(1).strip())
+
+        has_data = data.rooms is not None or data.nightly_rate_usd is not None or data.review_count is not None
+        if has_data:
+            logger.info(
+                "Parsed %s listing: rooms=%s, rate=%s, reviews=%s",
+                source, data.rooms, data.nightly_rate_usd, data.review_count,
+            )
+        else:
+            logger.info("No structured data parsed from %s page", source)
+
         return data
 
     async def extract_instagram_profile(self, profile_url: str) -> str | None:

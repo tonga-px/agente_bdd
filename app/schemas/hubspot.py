@@ -18,6 +18,9 @@ class HubSpotCompanyProperties(BaseModel):
     plaza: str | None = None
     cantidad_de_habitaciones: str | None = None
     habitaciones: str | None = None
+    booking_url: str | None = None
+    tipo_de_empresa: str | None = None
+    lifecyclestage: str | None = None
 
 
 class HubSpotCompany(BaseModel):
