@@ -609,7 +609,7 @@ async def test_search_hoteles_data_success(service, tavily_client_mock):
     assert "25 rooms" in result
     tavily_client_mock.search.assert_awaited_once()
     call_kwargs = tavily_client_mock.search.call_args
-    assert call_kwargs.kwargs.get("include_domains") == ["hoteles.com"]
+    assert call_kwargs.kwargs.get("include_domains") == ["hoteles.com", "hotels.com"]
 
 
 @pytest.mark.asyncio

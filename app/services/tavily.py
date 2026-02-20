@@ -47,6 +47,8 @@ _GOOGLE_REVIEWS_RE = re.compile(r"google.{0,120}?(\d[\d,. ]*\d)\s*(?:review|rese
 _TA_REVIEWS_RE = re.compile(r"tripadvisor.{0,120}?(\d[\d,. ]*\d)\s*(?:review|rese)", re.IGNORECASE)
 _BOOKING_REVIEWS_RE = re.compile(r"booking.{0,120}?(\d[\d,. ]*\d)\s*(?:review|rese)", re.IGNORECASE)
 
+_HOTELES_DOMAINS = ["hoteles.com", "hotels.com"]
+
 # Listing page scraping patterns
 _LISTING_REVIEW_RE = re.compile(
     r"(\d[\d,. ]*\d)\s*(?:review|rese[nñ]|opini[oó]n|comentario|calificaci)",
@@ -403,7 +405,7 @@ class TavilyService:
 
         result = await self._client.search(
             query=query,
-            include_domains=["hoteles.com"],
+            include_domains=_HOTELES_DOMAINS,
             max_results=3,
             include_answer=True,
         )
@@ -504,7 +506,7 @@ class TavilyService:
 
         result = await self._client.search(
             query=query,
-            include_domains=["hoteles.com"],
+            include_domains=_HOTELES_DOMAINS,
             max_results=3,
         )
 
@@ -517,7 +519,8 @@ class TavilyService:
         url = None
         for r in results:
             u = r.get("url", "")
-            if "hoteles.com" in u.lower():
+            u_lower = u.lower()
+            if "hoteles.com" in u_lower or "hotels.com" in u_lower:
                 url = u
                 break
 
