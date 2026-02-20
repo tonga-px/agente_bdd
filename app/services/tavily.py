@@ -25,9 +25,10 @@ _CONTACT_PATHS = ("/contacto", "/contact")
 _ROOM_RE = re.compile(r"(\d+)\s*(?:habitacion|room|cuarto|suite|chambre|quarto)", re.IGNORECASE)
 
 # Room type names on listing pages (Booking.com, Hoteles.com)
-# Stops at newlines, punctuation, and digits (bed counts, prices follow room names)
+# Keyword must be followed by a qualifying word (Doble, Standard, etc.)
+# to avoid matching hotel names like "Villa Mansa" or generic "room" mentions.
 _ROOM_TYPE_RE = re.compile(
-    r"((?:Habitaci[oó]n|Room|Suite|Estudio|Studio|Caba[nñ]a|Bungalow|Villa"
+    r"((?:Habitaci[oó]n|Suite|Estudio|Studio|Caba[nñ]a|Bungalow"
     r"|Loft|Penthouse|Apartamento|Apartment|Departamento|Dormitorio)"
     r"[^\n.,;:!?(){}0-9]{0,50})",
     re.IGNORECASE,

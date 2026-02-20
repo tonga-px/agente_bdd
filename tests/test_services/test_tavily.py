@@ -671,14 +671,14 @@ async def test_scrape_booking_page_partial_data(service, tavily_client_mock):
     """Only some fields extracted from Booking page."""
     tavily_client_mock.extract.return_value = {
         "results": [{
-            "raw_content": "Room Deluxe\n2 camas. Central location.",
+            "raw_content": "Habitación Deluxe\n2 camas. Central location.",
         }],
     }
 
     result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
 
     assert result is not None
-    assert result.room_types == ["Room Deluxe"]
+    assert result.room_types == ["Habitación Deluxe"]
     assert result.nightly_rate_usd is None
     assert result.review_count is None
 
@@ -726,7 +726,7 @@ async def test_scrape_hoteles_page_success(service, tavily_client_mock):
             "results": [{
                 "raw_content": (
                     "Hotel Sol\n"
-                    "Room Standard\n2 beds\n"
+                    "Habitación Standard\n2 beds\n"
                     "Suite Deluxe\n1 king bed\n"
                     "From US$65 per night. "
                     "Based on 567 opiniones."
@@ -743,7 +743,7 @@ async def test_scrape_hoteles_page_success(service, tavily_client_mock):
     assert result.source == "Hoteles.com"
     assert result.room_types is not None
     assert len(result.room_types) == 2
-    assert "Room Standard" in result.room_types
+    assert "Habitación Standard" in result.room_types
     assert "Suite Deluxe" in result.room_types
     assert result.nightly_rate_usd == "US$65"
     assert result.review_count == 567

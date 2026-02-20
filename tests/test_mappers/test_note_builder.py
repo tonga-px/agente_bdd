@@ -675,7 +675,7 @@ def test_scraped_listings_multiple_sources():
         ScrapedListingData(
             source="Booking.com",
             url="https://booking.com/hotel/test",
-            room_types=["Room Standard"],
+            room_types=["Habitación Standard"],
             review_count=500,
         ),
         ScrapedListingData(
@@ -688,7 +688,7 @@ def test_scraped_listings_multiple_sources():
     result = build_enrichment_note("Test", None, None, scraped_listings=listings)
     assert "Booking.com" in result
     assert "Hoteles.com" in result
-    assert "Room Standard" in result
+    assert "Habitación Standard" in result
     assert "US$65" in result
 
 
