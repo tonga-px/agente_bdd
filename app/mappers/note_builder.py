@@ -342,8 +342,9 @@ def _format_scraped_listings_section(
     rows: list[str] = []
     for listing in listings:
         items: list[str] = []
-        if listing.rooms is not None:
-            items.append(f"Habitaciones: {listing.rooms}")
+        if listing.room_types:
+            names = ", ".join(escape(t) for t in listing.room_types)
+            items.append(f"Tipos ({len(listing.room_types)}): {names}")
         if listing.nightly_rate_usd:
             items.append(f"Tarifa aprox: {escape(listing.nightly_rate_usd)}/noche")
         if listing.review_count is not None:

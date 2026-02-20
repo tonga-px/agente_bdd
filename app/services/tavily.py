@@ -24,6 +24,15 @@ _CONTACT_PATHS = ("/contacto", "/contact")
 
 _ROOM_RE = re.compile(r"(\d+)\s*(?:habitacion|room|cuarto|suite|chambre|quarto)", re.IGNORECASE)
 
+# Room type names on listing pages (Booking.com, Hoteles.com)
+# Stops at newlines, punctuation, and digits (bed counts, prices follow room names)
+_ROOM_TYPE_RE = re.compile(
+    r"((?:Habitaci[oó]n|Room|Suite|Estudio|Studio|Caba[nñ]a|Bungalow|Villa"
+    r"|Loft|Penthouse|Apartamento|Apartment|Departamento|Dormitorio)"
+    r"[^\n.,;:!?(){}0-9]{0,50})",
+    re.IGNORECASE,
+)
+
 _INSTAGRAM_URL_RE = re.compile(r"https?://(?:www\.)?instagram\.com/([a-zA-Z0-9_.]+)")
 _NON_PROFILE_PATHS = frozenset({"p", "reel", "stories", "explore", "accounts", "api"})
 
@@ -493,16 +502,22 @@ class TavilyService:
     def _parse_listing_data(
         text: str, source: str, url: str | None,
     ) -> ScrapedListingData:
-        """Parse rooms, nightly rate, review count from raw listing page text."""
+        """Parse room types, nightly rate, review count from listing page text."""
         data = ScrapedListingData(source=source, url=url)
 
-        # Rooms
-        m = _ROOM_RE.search(text)
-        if m:
-            try:
-                data.rooms = int(m.group(1))
-            except (ValueError, TypeError):
-                pass
+        # Room types (deduplicated, preserving order)
+        raw_types = _ROOM_TYPE_RE.findall(text)
+        if raw_types:
+            seen: set[str] = set()
+            unique: list[str] = []
+            for name in raw_types:
+                clean = name.strip()
+                key = clean.lower()
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(clean)
+            if unique:
+                data.room_types = unique
 
         # Nightly rate (USD)
         m = _RATE_RE.search(text)
@@ -517,11 +532,11 @@ class TavilyService:
         if m:
             data.review_count = _parse_int(m.group(1).strip())
 
-        has_data = data.rooms is not None or data.nightly_rate_usd is not None or data.review_count is not None
+        has_data = data.room_types or data.nightly_rate_usd is not None or data.review_count is not None
         if has_data:
             logger.info(
-                "Parsed %s listing: rooms=%s, rate=%s, reviews=%s",
-                source, data.rooms, data.nightly_rate_usd, data.review_count,
+                "Parsed %s listing: room_types=%s, rate=%s, reviews=%s",
+                source, data.room_types, data.nightly_rate_usd, data.review_count,
             )
         else:
             logger.info("No structured data parsed from %s page", source)

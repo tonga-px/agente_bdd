@@ -441,17 +441,6 @@ class EnrichmentService:
                     elif res is not None:
                         scraped_listings.append(res)
 
-            # Use scraped rooms as fallback if search_room_count returned nothing
-            if not rooms_str:
-                for listing in scraped_listings:
-                    if listing.rooms is not None:
-                        rooms_str = str(listing.rooms)
-                        logger.info(
-                            "Using room count %s from %s scrape",
-                            rooms_str, listing.source,
-                        )
-                        break
-
         # --- Merge results ---
         if place is None and ta_location is None:
             await self._hubspot.update_company(company.id, {"agente": ""})

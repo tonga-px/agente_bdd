@@ -655,7 +655,7 @@ def test_scraped_listings_in_note():
         ScrapedListingData(
             source="Booking.com",
             url="https://www.booking.com/hotel/pe/sol.html",
-            rooms=45,
+            room_types=["Suite Deluxe", "Habitación Doble", "Habitación Familiar"],
             nightly_rate_usd="US$85",
             review_count=1234,
         ),
@@ -663,7 +663,8 @@ def test_scraped_listings_in_note():
     result = build_enrichment_note("Test Hotel", None, None, scraped_listings=listings)
     assert "Datos de OTAs" in result
     assert "Booking.com" in result
-    assert "Habitaciones: 45" in result
+    assert "Tipos (3)" in result
+    assert "Suite Deluxe" in result
     assert "US$85" in result
     assert "1,234" in result
 
@@ -674,7 +675,7 @@ def test_scraped_listings_multiple_sources():
         ScrapedListingData(
             source="Booking.com",
             url="https://booking.com/hotel/test",
-            rooms=30,
+            room_types=["Room Standard"],
             review_count=500,
         ),
         ScrapedListingData(
@@ -687,7 +688,7 @@ def test_scraped_listings_multiple_sources():
     result = build_enrichment_note("Test", None, None, scraped_listings=listings)
     assert "Booking.com" in result
     assert "Hoteles.com" in result
-    assert "Habitaciones: 30" in result
+    assert "Room Standard" in result
     assert "US$65" in result
 
 
@@ -716,7 +717,7 @@ def test_scraped_listings_url_as_link():
         ScrapedListingData(
             source="Booking.com",
             url="https://booking.com/test",
-            rooms=10,
+            room_types=["Suite"],
         ),
     ]
     result = build_enrichment_note("Test", None, None, scraped_listings=listings)
@@ -741,7 +742,7 @@ def test_scraped_listings_section_order():
     place = GooglePlace(formattedAddress="Lima, Peru")
     rep = ReputationData(google_rating=4.0)
     listings = [
-        ScrapedListingData(source="Booking.com", rooms=20),
+        ScrapedListingData(source="Booking.com", room_types=["Suite"]),
     ]
     result = build_enrichment_note(
         "Test", place, None,

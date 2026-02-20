@@ -14,6 +14,6 @@ class ReputationData(BaseModel):
 class ScrapedListingData(BaseModel):
     source: str  # "Booking.com" or "Hoteles.com"
     url: str | None = None
-    rooms: int | None = None
+    room_types: list[str] | None = None  # e.g. ["Suite Deluxe", "Habitación Doble"]
     nightly_rate_usd: str | None = None  # e.g. "US$85", "$120"
     review_count: int | None = None

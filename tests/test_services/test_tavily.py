@@ -640,11 +640,14 @@ async def test_search_hoteles_data_api_error(service, tavily_client_mock):
 
 @pytest.mark.asyncio
 async def test_scrape_booking_page_success(service, tavily_client_mock):
-    """Extract Booking page and parse rooms, rate, reviews."""
+    """Extract Booking page and parse room types, rate, reviews."""
     tavily_client_mock.extract.return_value = {
         "results": [{
             "raw_content": (
-                "Hotel Sol - 45 habitaciones disponibles. "
+                "Hotel Sol\n"
+                "Habitación Doble Estándar\n"
+                "Suite Junior con Vista\n"
+                "Habitación Familiar\n"
                 "Precio desde US$85 por noche. "
                 "Basado en 1,234 reviews de huéspedes."
             ),
@@ -655,7 +658,9 @@ async def test_scrape_booking_page_success(service, tavily_client_mock):
 
     assert result is not None
     assert result.source == "Booking.com"
-    assert result.rooms == 45
+    assert result.room_types is not None
+    assert len(result.room_types) == 3
+    assert "Suite Junior con Vista" in result.room_types
     assert result.nightly_rate_usd == "US$85"
     assert result.review_count == 1234
     assert result.url == "https://www.booking.com/hotel/pe/sol.html"
@@ -666,14 +671,14 @@ async def test_scrape_booking_page_partial_data(service, tavily_client_mock):
     """Only some fields extracted from Booking page."""
     tavily_client_mock.extract.return_value = {
         "results": [{
-            "raw_content": "Hotel with 22 rooms in the city center.",
+            "raw_content": "Room Deluxe\n2 camas. Central location.",
         }],
     }
 
     result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
 
     assert result is not None
-    assert result.rooms == 22
+    assert result.room_types == ["Room Deluxe"]
     assert result.nightly_rate_usd is None
     assert result.review_count is None
 
@@ -720,7 +725,9 @@ async def test_scrape_hoteles_page_success(service, tavily_client_mock):
         return {
             "results": [{
                 "raw_content": (
-                    "Hotel Sol - 30 rooms. "
+                    "Hotel Sol\n"
+                    "Room Standard\n2 beds\n"
+                    "Suite Deluxe\n1 king bed\n"
                     "From US$65 per night. "
                     "Based on 567 opiniones."
                 ),
@@ -734,7 +741,10 @@ async def test_scrape_hoteles_page_success(service, tavily_client_mock):
 
     assert result is not None
     assert result.source == "Hoteles.com"
-    assert result.rooms == 30
+    assert result.room_types is not None
+    assert len(result.room_types) == 2
+    assert "Room Standard" in result.room_types
+    assert "Suite Deluxe" in result.room_types
     assert result.nightly_rate_usd == "US$65"
     assert result.review_count == 567
     assert "hoteles.com" in result.url
@@ -757,7 +767,7 @@ async def test_scrape_hoteles_page_fallback_to_content(service, tavily_client_mo
         return {
             "results": [{
                 "url": "https://www.hoteles.com/ho123/hotel-sol/",
-                "content": "Hotel Sol has 18 habitaciones, from US$50 per night, 200 reviews.",
+                "content": "Hotel Sol. Habitación Doble, Suite Premium. From US$50 per night, 200 reviews.",
             }],
         }
 
@@ -770,7 +780,8 @@ async def test_scrape_hoteles_page_fallback_to_content(service, tavily_client_mo
     result = await service.scrape_hoteles_page("Hotel Sol", "Lima")
 
     assert result is not None
-    assert result.rooms == 18
+    assert result.room_types is not None
+    assert "Suite Premium" in result.room_types
     assert result.nightly_rate_usd == "US$50"
 
 
@@ -787,13 +798,16 @@ async def test_scrape_hoteles_page_api_error(service, tavily_client_mock):
 # --- _parse_listing_data unit tests ---
 
 
-def test_parse_listing_rooms():
-    """Parse room count from text."""
+def test_parse_listing_room_types():
+    """Parse room type names from text."""
     from app.services.tavily import TavilyService
     result = TavilyService._parse_listing_data(
-        "This hotel has 42 habitaciones.", "Test", None,
+        "Habitación Doble Estándar\n2 camas\nSuite Junior\n1 cama king",
+        "Test", None,
     )
-    assert result.rooms == 42
+    assert result.room_types is not None
+    assert len(result.room_types) == 2
+    assert "Suite Junior" in result.room_types
 
 
 def test_parse_listing_rate_usd_prefix():
@@ -829,6 +843,16 @@ def test_parse_listing_no_data():
     result = TavilyService._parse_listing_data(
         "A beautiful hotel in the heart of the city.", "Test", None,
     )
-    assert result.rooms is None
+    assert result.room_types is None
     assert result.nightly_rate_usd is None
     assert result.review_count is None
+
+
+def test_parse_listing_deduplicates_room_types():
+    """Duplicate room type names are removed."""
+    from app.services.tavily import TavilyService
+    result = TavilyService._parse_listing_data(
+        "Suite Deluxe\n2 camas\nSuite Deluxe\n1 cama king",
+        "Test", None,
+    )
+    assert result.room_types == ["Suite Deluxe"]

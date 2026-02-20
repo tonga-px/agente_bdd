@@ -1440,7 +1440,7 @@ async def test_scraped_listings_in_note(tavily_enrichment_service):
     tavily.scrape_booking_page.return_value = ScrapedListingData(
         source="Booking.com",
         url="https://www.booking.com/hotel/ar/test.html",
-        rooms=45,
+        room_types=["Suite Deluxe", "Habitación Doble"],
         nightly_rate_usd="US$120",
         review_count=1234,
     )
@@ -1458,52 +1458,12 @@ async def test_scraped_listings_in_note(tavily_enrichment_service):
 
     assert result.status == "enriched"
     assert "Datos de OTAs" in result.note
+    assert "Tipos (2)" in result.note
+    assert "Suite Deluxe" in result.note
     assert "US$120" in result.note
     assert "US$95" in result.note
     assert "1,234" in result.note  # formatted review count
     assert "890" in result.note
-
-
-@pytest.mark.asyncio
-async def test_scraped_rooms_fallback(tavily_enrichment_service):
-    """When search_room_count returns nothing, scraped rooms are used."""
-    svc, hs, gp, tavily = tavily_enrichment_service
-
-    tavily.search_room_count.return_value = None  # no rooms from search
-    tavily.scrape_booking_page.return_value = ScrapedListingData(
-        source="Booking.com",
-        url="https://www.booking.com/hotel/ar/test.html",
-        rooms=30,
-    )
-
-    company = _company(name="Hotel Sol", city="Lima", country="Peru")
-    gp.text_search.return_value = _google_place()
-
-    await svc._process_company(company)
-
-    main_update = hs.update_company.await_args_list[-1].args[1]
-    assert main_update.get("cantidad_de_habitaciones") == "30"
-    assert main_update.get("habitaciones") == "30"
-    assert main_update.get("market_fit") == "Elefante"  # 30 rooms
-
-
-@pytest.mark.asyncio
-async def test_scraped_rooms_not_used_when_search_has_rooms(tavily_enrichment_service):
-    """search_room_count takes priority over scraped rooms."""
-    svc, hs, gp, tavily = tavily_enrichment_service
-
-    tavily.search_room_count.return_value = "22"  # from search
-    tavily.scrape_booking_page.return_value = ScrapedListingData(
-        source="Booking.com", rooms=50,
-    )
-
-    company = _company(name="Hotel Sol", city="Lima", country="Peru")
-    gp.text_search.return_value = _google_place()
-
-    await svc._process_company(company)
-
-    main_update = hs.update_company.await_args_list[-1].args[1]
-    assert main_update.get("cantidad_de_habitaciones") == "22"  # search wins
 
 
 @pytest.mark.asyncio
