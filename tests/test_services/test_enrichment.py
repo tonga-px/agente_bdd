@@ -1484,11 +1484,17 @@ async def test_scrape_errors_dont_block_enrichment(tavily_enrichment_service):
 
 
 @pytest.mark.asyncio
-async def test_no_booking_url_skips_booking_scrape(tavily_enrichment_service):
-    """Without booking URL, only hoteles.com scrape runs."""
+async def test_no_booking_url_still_discovers_and_scrapes(tavily_enrichment_service):
+    """Without booking URL from search, scrape_booking_page still runs (discovers its own URL)."""
     svc, hs, gp, tavily = tavily_enrichment_service
 
-    tavily.search_booking_data.return_value = BookingData()  # no url
+    tavily.search_booking_data.return_value = BookingData()  # no url from search
+    tavily.scrape_booking_page.return_value = ScrapedListingData(
+        source="Booking.com",
+        url="https://www.booking.com/hotel/pe/sol.html",
+        room_types=["Suite Deluxe"],
+        nightly_rate_usd="US$100",
+    )
     tavily.scrape_hoteles_page.return_value = ScrapedListingData(
         source="Hoteles.com", nightly_rate_usd="US$80", review_count=500,
     )
@@ -1498,6 +1504,11 @@ async def test_no_booking_url_skips_booking_scrape(tavily_enrichment_service):
 
     result = await svc._process_company(company)
 
-    tavily.scrape_booking_page.assert_not_awaited()
+    # Both scrapers run (booking discovers its own URL)
+    tavily.scrape_booking_page.assert_awaited_once()
+    call_kwargs = tavily.scrape_booking_page.await_args
+    assert call_kwargs.kwargs.get("known_url") is None  # no hint from search
+    assert "Booking.com" in result.note
     assert "Hoteles.com" in result.note
+    assert "US$100" in result.note
     assert "US$80" in result.note

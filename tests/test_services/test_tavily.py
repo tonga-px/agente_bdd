@@ -654,7 +654,10 @@ async def test_scrape_booking_page_success(service, tavily_client_mock):
         }],
     }
 
-    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/sol.html")
+    result = await service.scrape_booking_page(
+        "Hotel Sol", "Lima", "Peru",
+        known_url="https://www.booking.com/hotel/pe/sol.html",
+    )
 
     assert result is not None
     assert result.source == "Booking.com"
@@ -675,7 +678,10 @@ async def test_scrape_booking_page_partial_data(service, tavily_client_mock):
         }],
     }
 
-    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
+    result = await service.scrape_booking_page(
+        "Hotel Test", "Lima", "Peru",
+        known_url="https://www.booking.com/hotel/pe/test.html",
+    )
 
     assert result is not None
     assert result.room_types == ["Habitación Deluxe"]
@@ -688,7 +694,10 @@ async def test_scrape_booking_page_no_content(service, tavily_client_mock):
     """No content from extract → None."""
     tavily_client_mock.extract.return_value = {"results": []}
 
-    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
+    result = await service.scrape_booking_page(
+        "Hotel Test", "Lima", "Peru",
+        known_url="https://www.booking.com/hotel/pe/test.html",
+    )
 
     assert result is None
 
@@ -698,7 +707,51 @@ async def test_scrape_booking_page_api_error(service, tavily_client_mock):
     """API error → None (graceful degradation)."""
     tavily_client_mock.extract.side_effect = Exception("API down")
 
-    result = await service.scrape_booking_page("https://www.booking.com/hotel/pe/test.html")
+    result = await service.scrape_booking_page(
+        "Hotel Test", "Lima", "Peru",
+        known_url="https://www.booking.com/hotel/pe/test.html",
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_scrape_booking_page_discovers_url(service, tavily_client_mock):
+    """No known_url → discovers URL via search, then extracts page."""
+    tavily_client_mock.search.return_value = {
+        "results": [{
+            "url": "https://www.booking.com/hotel/pe/sol.html",
+            "content": "Hotel Sol en Lima",
+        }],
+    }
+    tavily_client_mock.extract.return_value = {
+        "results": [{
+            "raw_content": (
+                "Habitación Doble Estándar\n"
+                "Suite Junior\n"
+                "From US$90 per night. 500 reviews."
+            ),
+        }],
+    }
+
+    result = await service.scrape_booking_page("Hotel Sol", "Lima", "Peru")
+
+    assert result is not None
+    assert result.source == "Booking.com"
+    assert result.url == "https://www.booking.com/hotel/pe/sol.html"
+    assert result.room_types is not None
+    assert len(result.room_types) == 2
+    tavily_client_mock.search.assert_awaited_once()
+    call_kwargs = tavily_client_mock.search.call_args.kwargs
+    assert call_kwargs.get("include_domains") == ["booking.com"]
+
+
+@pytest.mark.asyncio
+async def test_scrape_booking_page_discover_no_results(service, tavily_client_mock):
+    """No known_url and search finds nothing → None."""
+    tavily_client_mock.search.return_value = {"results": []}
+
+    result = await service.scrape_booking_page("Hotel Fake", "Nowhere")
 
     assert result is None
 

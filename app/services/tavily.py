@@ -425,16 +425,62 @@ class TavilyService:
         logger.info("Tavily found %d chars from hoteles.com for %s", len(combined), hotel_name)
         return combined
 
-    async def scrape_booking_page(self, url: str) -> ScrapedListingData | None:
-        """Extract a Booking.com page and parse rooms, rate, reviews."""
+    async def scrape_booking_page(
+        self,
+        hotel_name: str,
+        city: str | None = None,
+        country: str | None = None,
+        *,
+        known_url: str | None = None,
+    ) -> ScrapedListingData | None:
+        """Scrape the hotel's Booking.com page for room types, rate, reviews.
+
+        If *known_url* is provided it is used directly; otherwise the URL
+        is discovered via a Tavily search on booking.com.
+        """
         try:
-            text = await self._extract_page(url)
-            if not text:
-                return None
-            return self._parse_listing_data(text, "Booking.com", url)
+            return await self._do_scrape_booking(
+                hotel_name, city, country, known_url,
+            )
         except Exception:
-            logger.exception("Tavily Booking page scrape failed for %s", url)
+            logger.exception("Tavily Booking page scrape failed for %s", hotel_name)
             return None
+
+    async def _do_scrape_booking(
+        self,
+        hotel_name: str,
+        city: str | None,
+        country: str | None,
+        known_url: str | None,
+    ) -> ScrapedListingData | None:
+        url = known_url
+
+        if not url:
+            # Discover the Booking.com URL via search
+            location_parts = [p for p in (city, country) if p]
+            location = " ".join(location_parts)
+            query = f'"{hotel_name}" {location}'.strip()
+
+            result = await self._client.search(
+                query=query,
+                include_domains=["booking.com"],
+                max_results=3,
+            )
+            results = result.get("results", [])
+            for r in results:
+                u = r.get("url", "")
+                if "booking.com" in u.lower():
+                    url = u
+                    break
+
+        if not url:
+            logger.info("No Booking.com URL found for %s", hotel_name)
+            return None
+
+        text = await self._extract_page(url)
+        if not text:
+            return None
+        return self._parse_listing_data(text, "Booking.com", url)
 
     async def scrape_hoteles_page(
         self,

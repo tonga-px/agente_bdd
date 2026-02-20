@@ -423,23 +423,23 @@ class EnrichmentService:
 
         # --- Phase 2: Scrape listing pages (Booking.com + Hoteles.com) ---
         scraped_listings: list[ScrapedListingData] = []
-        if self._tavily:
-            scrape_tasks: list = []
-            if booking_data and booking_data.url:
-                scrape_tasks.append(self._tavily.scrape_booking_page(booking_data.url))
-            if props.name:
-                scrape_tasks.append(
-                    self._tavily.scrape_hoteles_page(props.name, props.city, props.country)
-                )
-            if scrape_tasks:
-                scrape_results = await asyncio.gather(
-                    *scrape_tasks, return_exceptions=True,
-                )
-                for i, res in enumerate(scrape_results):
-                    if isinstance(res, BaseException):
-                        logger.warning("Listing scrape task %d failed: %s", i, res)
-                    elif res is not None:
-                        scraped_listings.append(res)
+        if self._tavily and props.name:
+            known_booking_url = booking_data.url if booking_data else None
+            scrape_results = await asyncio.gather(
+                self._tavily.scrape_booking_page(
+                    props.name, props.city, props.country,
+                    known_url=known_booking_url,
+                ),
+                self._tavily.scrape_hoteles_page(
+                    props.name, props.city, props.country,
+                ),
+                return_exceptions=True,
+            )
+            for i, res in enumerate(scrape_results):
+                if isinstance(res, BaseException):
+                    logger.warning("Listing scrape task %d failed: %s", i, res)
+                elif res is not None:
+                    scraped_listings.append(res)
 
         # --- Merge results ---
         if place is None and ta_location is None:
